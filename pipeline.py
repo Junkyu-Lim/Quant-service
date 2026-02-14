@@ -1,154 +1,104 @@
 """
-Main pipeline: orchestrates scraping, analysis, and database persistence.
+Pipeline orchestrator: runs quant_collector_enhanced → quant_screener
+and saves a dashboard-ready CSV alongside the Excel outputs.
 """
 
 import logging
-import time
-from datetime import date, datetime
+from datetime import datetime
 
-import config
-from models import (
-    Session,
-    Stock,
-    DailyPrice,
-    FinancialMetric,
-    BatchLog,
-    init_db,
+from quant_collector_enhanced import run_full as collector_run, test_crawling
+from quant_screener import (
+    load_csv,
+    preprocess_indicators,
+    detect_unit_multiplier,
+    analyze_all,
+    calc_valuation,
+    apply_screen,
+    apply_momentum_screen,
+    apply_garp_screen,
+    apply_cashcow_screen,
+    apply_turnaround_screen,
+    save_to_excel,
+    DATA_DIR,
 )
-from scraper.krx import fetch_all_listings, fetch_daily_prices, fetch_fundamental
-from analysis.analyzer import analyze_stock
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger("PIPELINE")
 
 
-def sync_stock_listings(session) -> list[Stock]:
-    """Fetch latest listings and upsert into the stocks table."""
-    df = fetch_all_listings()
-    stocks = []
-    for _, row in df.iterrows():
-        stock = session.get(Stock, row["code"])
-        if stock is None:
-            stock = Stock(
-                code=row["code"],
-                name=row["name"],
-                market=row["market"],
-                sector=row["sector"],
-            )
-            session.add(stock)
-        else:
-            stock.name = row["name"]
-            stock.market = row["market"]
-            stock.sector = row["sector"]
-            stock.updated_at = datetime.utcnow()
-        stocks.append(stock)
-    session.commit()
-    logger.info("Synced %d stock listings", len(stocks))
-    return stocks
-
-
-def process_stock(session, stock: Stock, today: date) -> bool:
-    """Scrape and analyse a single stock; persist results. Returns True on success."""
-    try:
-        # 1. Daily prices
-        prices_df = fetch_daily_prices(stock.code, pages=3)
-        for _, row in prices_df.iterrows():
-            exists = (
-                session.query(DailyPrice)
-                .filter_by(code=stock.code, trade_date=row["trade_date"])
-                .first()
-            )
-            if exists is None:
-                session.add(
-                    DailyPrice(
-                        code=stock.code,
-                        trade_date=row["trade_date"],
-                        open=row["open"],
-                        high=row["high"],
-                        low=row["low"],
-                        close=row["close"],
-                        volume=row["volume"],
-                    )
-                )
-
-        # 2. Fundamentals
-        fundamentals = fetch_fundamental(stock.code)
-
-        # Update market_cap on latest price row if available
-        if fundamentals.get("market_cap") and not prices_df.empty:
-            latest_date = prices_df["trade_date"].max()
-            dp = (
-                session.query(DailyPrice)
-                .filter_by(code=stock.code, trade_date=latest_date)
-                .first()
-            )
-            if dp:
-                dp.market_cap = fundamentals["market_cap"]
-
-        # 3. Analysis
-        metrics = analyze_stock(prices_df, fundamentals)
-
-        # Upsert financial metric for today
-        fm = (
-            session.query(FinancialMetric)
-            .filter_by(code=stock.code, snapshot_date=today)
-            .first()
-        )
-        if fm is None:
-            fm = FinancialMetric(code=stock.code, snapshot_date=today)
-            session.add(fm)
-        for k, v in metrics.items():
-            setattr(fm, k, v)
-
-        session.commit()
-        return True
-
-    except Exception:
-        session.rollback()
-        logger.exception("Failed processing %s (%s)", stock.code, stock.name)
-        return False
-
-
-def run_pipeline(limit: int | None = None):
-    """Run the full pipeline end-to-end.
+def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
+    """Run full pipeline: collect data then screen.
 
     Args:
-        limit: If set, only process this many stocks (useful for testing).
+        skip_collect: If True, skip collection and only run screener
+            (useful when CSV data already exists).
+        test_mode: If True, only collect 3 sample stocks.
     """
-    init_db()
-    session = Session()
-    today = date.today()
+    start = datetime.now()
+    log.info("Pipeline started at %s", start.strftime("%Y-%m-%d %H:%M:%S"))
 
-    # Log start
-    batch_log = BatchLog(job_name="daily_pipeline", started_at=datetime.utcnow())
-    session.add(batch_log)
-    session.commit()
+    # ── Step 1: Collect ──
+    if not skip_collect:
+        if test_mode:
+            log.info("Running collector in TEST mode (3 stocks)...")
+            test_crawling()
+        else:
+            log.info("Running full collector...")
+            collector_run()
+    else:
+        log.info("Skipping collection (--skip-collect)")
 
-    try:
-        # Step 1 - sync listings
-        stocks = sync_stock_listings(session)
-        if limit:
-            stocks = stocks[:limit]
+    # ── Step 2: Screen & Analyse ──
+    log.info("Running screener...")
+    master = load_csv("master")
+    daily = load_csv("daily")
+    fs = load_csv("financial_statements")
+    ind = load_csv("indicators")
+    shares = load_csv("shares")
 
-        # Step 2 - process each stock
-        success_count = 0
-        for i, stock in enumerate(stocks, 1):
-            logger.info("[%d/%d] Processing %s %s", i, len(stocks), stock.code, stock.name)
-            if process_stock(session, stock, today):
-                success_count += 1
-            time.sleep(config.REQUEST_DELAY)
+    if daily.empty:
+        log.error("daily CSV not found – cannot run screener")
+        return
 
-        batch_log.status = "success"
-        batch_log.stocks_processed = success_count
-        batch_log.message = f"Processed {success_count}/{len(stocks)} stocks"
+    ind = preprocess_indicators(ind)
+    multiplier = detect_unit_multiplier(ind)
+    anal_df = analyze_all(fs, ind)
+    full_df = calc_valuation(daily, anal_df, multiplier, shares)
 
-    except Exception as exc:
-        batch_log.status = "failed"
-        batch_log.message = str(exc)[:500]
-        logger.exception("Pipeline failed")
+    # Merge market/sector info from master
+    if not master.empty and "시장구분" in master.columns:
+        master_info = master[["종목코드", "시장구분", "종목구분"]].drop_duplicates("종목코드")
+        full_df = full_df.merge(master_info, on="종목코드", how="left")
 
-    finally:
-        batch_log.finished_at = datetime.utcnow()
-        session.commit()
-        session.close()
+    # ── Save dashboard CSV (for fast webapp loading) ──
+    dashboard_csv = DATA_DIR / "dashboard_result.csv"
+    full_df.to_csv(dashboard_csv, index=False, encoding="utf-8-sig")
+    log.info("Dashboard CSV saved: %s (%d rows)", dashboard_csv.name, len(full_df))
 
-    logger.info("Pipeline finished: %s", batch_log.message)
+    # ── Save Excel outputs (same as original screener) ──
+    save_to_excel(
+        full_df.sort_values("종합점수", ascending=False),
+        DATA_DIR / "quant_all_stocks.xlsx", "전체종목",
+    )
+
+    screened = apply_screen(full_df)
+    save_to_excel(screened, DATA_DIR / "quant_screened.xlsx", "우량주")
+
+    momentum_df = apply_momentum_screen(full_df)
+    save_to_excel(momentum_df, DATA_DIR / "quant_momentum.xlsx", "모멘텀")
+
+    garp_df = apply_garp_screen(full_df)
+    save_to_excel(garp_df, DATA_DIR / "quant_GARP.xlsx", "GARP")
+
+    cashcow_df = apply_cashcow_screen(full_df)
+    save_to_excel(cashcow_df, DATA_DIR / "quant_cashcow.xlsx", "캐시카우")
+
+    turnaround_df = apply_turnaround_screen(full_df)
+    save_to_excel(turnaround_df, DATA_DIR / "quant_turnaround.xlsx", "턴어라운드")
+
+    elapsed = datetime.now() - start
+    log.info(
+        "Pipeline finished in %s — %d total, %d screened, %d momentum, "
+        "%d GARP, %d cashcow, %d turnaround",
+        elapsed, len(full_df), len(screened), len(momentum_df),
+        len(garp_df), len(cashcow_df), len(turnaround_df),
+    )
