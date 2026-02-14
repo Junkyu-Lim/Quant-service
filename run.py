@@ -3,9 +3,12 @@
 Entry point for the Quant service.
 
 Usage:
-    python run.py server          – Start web server with batch scheduler
-    python run.py pipeline        – Run the data pipeline once (foreground)
-    python run.py pipeline --limit 10  – Process only 10 stocks (for testing)
+    python run.py server                       – Start web server + batch scheduler
+    python run.py pipeline                     – Full pipeline (collect + screen)
+    python run.py pipeline --test              – Test mode (3 sample stocks)
+    python run.py pipeline --skip-collect      – Screen only (CSV data must exist)
+    python run.py collect                      – Run collector only
+    python run.py screen                       – Run screener only
 """
 
 import argparse
@@ -14,20 +17,16 @@ import sys
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
 
 def cmd_server(args):
-    from models import init_db
     from batch.scheduler import start_scheduler
     from webapp.app import app
     import config
-
-    init_db()
-    logger.info("Database initialised")
 
     scheduler = start_scheduler()
     logger.info("Batch scheduler active")
@@ -39,28 +38,52 @@ def cmd_server(args):
 
 
 def cmd_pipeline(args):
-    from models import init_db
     from pipeline import run_pipeline
+    run_pipeline(
+        skip_collect=args.skip_collect,
+        test_mode=args.test,
+    )
 
-    init_db()
-    run_pipeline(limit=args.limit)
+
+def cmd_collect(args):
+    from quant_collector_enhanced import run_full, test_crawling
+    if args.test:
+        test_crawling()
+    else:
+        run_full()
+
+
+def cmd_screen(args):
+    from quant_screener import run
+    run()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quant Service – KOSPI/KOSDAQ analysis")
+    parser = argparse.ArgumentParser(description="Quant Service - KOSPI/KOSDAQ analysis")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("server", help="Start web server with scheduler")
 
-    p_pipe = sub.add_parser("pipeline", help="Run data pipeline once")
-    p_pipe.add_argument("--limit", type=int, default=None, help="Max stocks to process")
+    p_pipe = sub.add_parser("pipeline", help="Full pipeline (collect + screen)")
+    p_pipe.add_argument("--test", action="store_true", help="Test mode (3 stocks only)")
+    p_pipe.add_argument("--skip-collect", action="store_true", help="Skip collection, screen only")
+
+    p_col = sub.add_parser("collect", help="Run data collector only")
+    p_col.add_argument("--test", action="store_true", help="Test mode (3 stocks only)")
+
+    sub.add_parser("screen", help="Run screener only (requires existing CSVs)")
 
     args = parser.parse_args()
 
-    if args.command == "server":
-        cmd_server(args)
-    elif args.command == "pipeline":
-        cmd_pipeline(args)
+    commands = {
+        "server": cmd_server,
+        "pipeline": cmd_pipeline,
+        "collect": cmd_collect,
+        "screen": cmd_screen,
+    }
+    handler = commands.get(args.command)
+    if handler:
+        handler(args)
     else:
         parser.print_help()
         sys.exit(1)

@@ -3,24 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quant Dashboard – KOSPI / KOSDAQ</title>
-
-  <!-- Bootstrap 5 -->
+  <title>Quant Dashboard - KOSPI / KOSDAQ</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <!-- DataTables + Bootstrap 5 integration -->
-  <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
-
   <link href="/static/css/style.css" rel="stylesheet">
 </head>
 <body>
 
 <!-- Navbar -->
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+<nav class="navbar navbar-dark bg-dark">
   <div class="container-fluid">
     <a class="navbar-brand" href="/">Quant Dashboard</a>
-    <div class="d-flex align-items-center">
-      <span id="snapshot-date" class="text-light me-3"></span>
-      <button id="btn-refresh" class="btn btn-outline-light btn-sm me-2">Refresh</button>
+    <div class="d-flex align-items-center gap-2">
+      <button id="btn-refresh" class="btn btn-outline-light btn-sm">Refresh</button>
       <button id="btn-trigger" class="btn btn-warning btn-sm">Run Pipeline</button>
     </div>
   </div>
@@ -28,11 +22,45 @@
 
 <div class="container-fluid mt-3">
 
-  <!-- Market summary cards -->
+  <!-- Market summary -->
   <div class="row mb-3" id="market-summary"></div>
 
+  <!-- Screening tabs -->
+  <ul class="nav nav-tabs mb-0" id="screen-tabs">
+    <li class="nav-item">
+      <a class="nav-link active" href="#" data-screen="all">
+        All Stocks <span class="badge bg-secondary ms-1" id="cnt-all"></span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-screen="screened">
+        Quality <span class="badge bg-success ms-1" id="cnt-screened"></span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-screen="momentum">
+        Momentum <span class="badge bg-primary ms-1" id="cnt-momentum"></span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-screen="garp">
+        GARP <span class="badge bg-info ms-1" id="cnt-garp"></span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-screen="cashcow">
+        Cashcow <span class="badge bg-warning text-dark ms-1" id="cnt-cashcow"></span>
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" data-screen="turnaround">
+        Turnaround <span class="badge bg-danger ms-1" id="cnt-turnaround"></span>
+      </a>
+    </li>
+  </ul>
+
   <!-- Filters -->
-  <div class="card mb-3">
+  <div class="card border-top-0 rounded-top-0 mb-3">
     <div class="card-body py-2">
       <form id="filter-form" class="row g-2 align-items-end">
         <div class="col-auto">
@@ -42,10 +70,6 @@
             <option value="KOSPI">KOSPI</option>
             <option value="KOSDAQ">KOSDAQ</option>
           </select>
-        </div>
-        <div class="col-auto">
-          <label class="form-label mb-0 small">Sector</label>
-          <input id="f-sector" class="form-control form-control-sm" placeholder="e.g. 반도체">
         </div>
         <div class="col-auto">
           <label class="form-label mb-0 small">Search</label>
@@ -59,25 +83,11 @@
     </div>
   </div>
 
-  <!-- Main data table -->
+  <!-- Data table -->
   <div class="table-responsive">
     <table id="stock-table" class="table table-striped table-hover table-sm w-100">
       <thead class="table-dark">
-        <tr>
-          <th data-col="code">Code</th>
-          <th data-col="name">Name</th>
-          <th data-col="market">Market</th>
-          <th data-col="sector">Sector</th>
-          <th data-col="change_pct">Change %</th>
-          <th data-col="per">PER</th>
-          <th data-col="pbr">PBR</th>
-          <th data-col="eps">EPS</th>
-          <th data-col="roe">ROE %</th>
-          <th data-col="dividend_yield">Div Yield %</th>
-          <th data-col="rsi14">RSI(14)</th>
-          <th data-col="ma5">MA5</th>
-          <th data-col="ma20">MA20</th>
-        </tr>
+        <tr id="table-header"></tr>
       </thead>
       <tbody id="stock-tbody"></tbody>
     </table>
@@ -92,7 +102,7 @@
     </div>
   </div>
 
-  <!-- Stock detail modal -->
+  <!-- Detail modal -->
   <div class="modal fade" id="detail-modal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -100,16 +110,13 @@
           <h5 class="modal-title" id="detail-title">Stock Detail</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
-        <div class="modal-body">
-          <div class="row mb-3" id="detail-metrics"></div>
-          <canvas id="price-chart" height="250"></canvas>
-        </div>
+        <div class="modal-body" id="detail-body"></div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Batch status toast -->
+<!-- Toast -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:11">
   <div id="toast-msg" class="toast" role="alert">
     <div class="toast-header">
@@ -120,9 +127,7 @@
   </div>
 </div>
 
-<!-- JS libs -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="/static/js/dashboard.js"></script>
 </body>
 </html>

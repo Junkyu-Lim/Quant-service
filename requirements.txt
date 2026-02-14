@@ -1,9 +1,12 @@
 flask>=3.0
 flask-cors>=4.0
-sqlalchemy>=2.0
 apscheduler>=3.10
 requests>=2.31
-beautifulsoup4>=4.12
 pandas>=2.1
+numpy>=1.24
+FinanceDataReader>=0.9
+pykrx>=1.0
+tqdm>=4.65
+openpyxl>=3.1
 lxml>=5.0
 gunicorn>=21.2

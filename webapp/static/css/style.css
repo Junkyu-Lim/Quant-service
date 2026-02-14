@@ -1,78 +1,34 @@
-/* Quant Dashboard styles */
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #f5f6fa;
-}
-
-.navbar-brand {
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
+/* Quant Dashboard */
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f6fa; }
+.navbar-brand { font-weight: 700; letter-spacing: .5px; }
 
 /* Summary cards */
-.summary-card {
-  border-left: 4px solid #0d6efd;
-  background: #fff;
-}
-.summary-card.kosdaq {
-  border-left-color: #dc3545;
-}
-.summary-card .card-title {
-  font-size: 0.85rem;
-  color: #6c757d;
-  margin-bottom: 0.25rem;
-}
-.summary-card .metric-value {
-  font-size: 1.4rem;
-  font-weight: 700;
-}
+.summary-card { border-left: 4px solid #0d6efd; background: #fff; }
+.summary-card.kosdaq { border-left-color: #dc3545; }
+.summary-card .card-title { font-size: .85rem; color: #6c757d; margin-bottom: .25rem; }
+.summary-card .metric-value { font-size: 1.4rem; font-weight: 700; }
+
+/* Screening tabs */
+#screen-tabs .nav-link { font-size: .85rem; font-weight: 500; }
+#screen-tabs .nav-link.active { font-weight: 700; }
 
 /* Table */
-#stock-table th {
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  font-size: 0.82rem;
-}
-#stock-table th:hover {
-  background: #343a40;
-}
-#stock-table th .sort-arrow {
-  margin-left: 4px;
-  font-size: 0.7rem;
-}
-#stock-table td {
-  vertical-align: middle;
-  font-size: 0.82rem;
-  white-space: nowrap;
-}
+#stock-table th { cursor: pointer; user-select: none; white-space: nowrap; font-size: .78rem; }
+#stock-table th:hover { background: #343a40; }
+#stock-table th .sort-arrow { margin-left: 3px; font-size: .65rem; }
+#stock-table td { vertical-align: middle; font-size: .78rem; white-space: nowrap; }
+#stock-tbody tr { cursor: pointer; }
+#stock-tbody tr:hover { background-color: #e9ecef !important; }
 
-/* Change % colouring */
-.text-pos { color: #dc3545; }    /* Korean market: red = up */
-.text-neg { color: #0d6efd; }    /* blue = down */
+/* Value colouring (Korean market convention: red=up, blue=down) */
+.val-pos { color: #dc3545; }
+.val-neg { color: #0d6efd; }
 
-/* Row clickable */
-#stock-tbody tr {
-  cursor: pointer;
-}
-#stock-tbody tr:hover {
-  background-color: #e9ecef !important;
-}
+/* Detail modal metric grid */
+.metric-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.metric-pill { padding: 6px 12px; border-radius: 6px; background: #f0f0f0; font-size: .82rem; }
+.metric-pill .lbl { color: #6c757d; font-size: .72rem; }
+.metric-pill .val { font-weight: 600; }
 
-/* Detail modal metric pills */
-.metric-pill {
-  display: inline-block;
-  padding: 6px 14px;
-  margin: 3px;
-  border-radius: 6px;
-  background: #f0f0f0;
-  font-size: 0.85rem;
-}
-.metric-pill .label {
-  color: #6c757d;
-  font-size: 0.75rem;
-}
-.metric-pill .value {
-  font-weight: 600;
-}
+/* Score bar */
+.score-bar { display: inline-block; height: 8px; border-radius: 4px; background: #0d6efd; min-width: 4px; }
