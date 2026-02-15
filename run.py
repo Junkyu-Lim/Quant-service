@@ -46,11 +46,8 @@ def cmd_pipeline(args):
 
 
 def cmd_collect(args):
-    from quant_collector_enhanced import run_full, test_crawling
-    if args.test:
-        test_crawling()
-    else:
-        run_full()
+    from quant_collector_enhanced import run_full
+    run_full(test_mode=args.test)
 
 
 def cmd_screen(args):

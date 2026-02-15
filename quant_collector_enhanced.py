@@ -592,88 +592,88 @@ def test_crawling():
 # 메인 파이프라인
 # ═════════════════════════════════════════════
 
-def run_full():
-    """전체 데이터 수집 (날짜별 파일 버전 관리 + 이어하기)"""
+def run_full(test_mode: bool = False):
+    """전체 데이터 수집 (SQLite DB 저장 + 이어하기)
+
+    Args:
+        test_mode: True이면 TEST_TICKERS(3개)만 수집
+    """
+    import db as _db
+    _db.init_db()
+
     start = datetime.now()
     biz_day = get_biz_day()  # 예: '20260206'
     log.info(f"📅 기준 영업일: {biz_day}")
-
-    # ── 파일명 정의 (날짜 포함) ──
-    # 예: master_20260206.csv
-    path_master = DATA_DIR / f"master_{biz_day}.csv"
-    path_daily = DATA_DIR / f"daily_{biz_day}.csv"
-    path_fs = DATA_DIR / f"financial_statements_{biz_day}.csv"
-    path_ind = DATA_DIR / f"indicators_{biz_day}.csv"
-    path_shares = DATA_DIR / f"shares_{biz_day}.csv"
+    if test_mode:
+        log.info(f"🧪 테스트 모드: {len(TEST_TICKERS)}개 종목만 수집")
 
     # ── 1) 마스터 ──
-    if path_master.exists():
-        log.info(f"📂 {path_master.name} 파일이 있어 로드합니다.")
-        master = pd.read_csv(path_master, encoding="utf-8-sig")
+    if _db.table_has_data("master", biz_day):
+        log.info("📂 master 데이터가 DB에 있어 로드합니다.")
+        master = _db.load_latest("master")
     else:
         master = collect_master()
-        master.to_csv(path_master, index=False, encoding="utf-8-sig")
-        log.info(f"✅ {path_master.name} 저장 ({len(master)}건)")
+        _db.save_df(master, "master", biz_day)
 
     # ── 2) 일별 시세 ──
-    if path_daily.exists():
-        log.info(f"📂 {path_daily.name} 파일이 있어 로드합니다.")
-        daily = pd.read_csv(path_daily, encoding="utf-8-sig")
+    if _db.table_has_data("daily", biz_day):
+        log.info("📂 daily 데이터가 DB에 있어 로드합니다.")
+        daily = _db.load_latest("daily")
     else:
         daily = collect_daily(biz_day)
-        daily.to_csv(path_daily, index=False, encoding="utf-8-sig")
-        log.info(f"✅ {path_daily.name} 저장 ({len(daily)}건)")
+        _db.save_df(daily, "daily", biz_day)
 
     # 보통주만 추출 (FnGuide 크롤링 대상)
     targets = master.loc[
         (master["종목구분"] == "보통주") & (master["시장구분"].isin(["KOSPI", "KOSDAQ"])),
         "종목코드",
     ].tolist()
-    
+
     # 종목코드 포맷 통일 (005930)
     targets = [f"{x:06d}" if isinstance(x, (int, float)) else str(x) for x in targets]
-    
-    log.info(f"🎯 FnGuide 크롤링 대상: {len(targets)}개 보통주")
+
+    # 테스트 모드면 TEST_TICKERS만 수집
+    if test_mode:
+        targets = [t for t in targets if t in TEST_TICKERS]
+        if not targets:
+            targets = TEST_TICKERS
+        log.info(f"🧪 테스트 대상: {targets}")
+    else:
+        log.info(f"🎯 FnGuide 크롤링 대상: {len(targets)}개 보통주")
 
     # ── 3) 재무제표 ──
-    if path_fs.exists():
-        log.info(f"⏭️  {path_fs.name} 이미 존재하여 수집 건너뜀")
+    if _db.table_has_data("financial_statements", biz_day):
+        log.info("⏭️  financial_statements 이미 존재하여 수집 건너뜀")
     else:
         fs_rows = parallel_collect(fetch_fs, targets, "재무제표")
         if fs_rows:
-            fs_df = pd.DataFrame(fs_rows)
-            fs_df.to_csv(path_fs, index=False, encoding="utf-8-sig")
-            log.info(f"✅ {path_fs.name} 저장 ({len(fs_df)}건)")
+            _db.save_df(pd.DataFrame(fs_rows), "financial_statements", biz_day)
         else:
             log.warning("⚠️ 재무제표 데이터 없음")
 
     # ── 4) 핵심 지표 ──
-    if path_ind.exists():
-        log.info(f"⏭️  {path_ind.name} 이미 존재하여 수집 건너뜀")
+    if _db.table_has_data("indicators", biz_day):
+        log.info("⏭️  indicators 이미 존재하여 수집 건너뜀")
     else:
         ind_rows = parallel_collect(fetch_indicators, targets, "핵심지표")
         if ind_rows:
-            ind_df = pd.DataFrame(ind_rows)
-            ind_df.to_csv(path_ind, index=False, encoding="utf-8-sig")
-            log.info(f"✅ {path_ind.name} 저장 ({len(ind_df)}건)")
+            _db.save_df(pd.DataFrame(ind_rows), "indicators", biz_day)
         else:
             log.warning("⚠️ 핵심지표 데이터 없음")
 
     # ── 5) 주식수 ──
-    if path_shares.exists():
-        log.info(f"⏭️  {path_shares.name} 이미 존재하여 수집 건너뜀")
+    if _db.table_has_data("shares", biz_day):
+        log.info("⏭️  shares 이미 존재하여 수집 건너뜀")
     else:
         share_rows = parallel_collect(fetch_shares, targets, "주식수")
         if share_rows:
-            share_df = pd.DataFrame(share_rows)
-            share_df.to_csv(path_shares, index=False, encoding="utf-8-sig")
-            log.info(f"✅ {path_shares.name} 저장 ({len(share_df)}건)")
+            _db.save_df(pd.DataFrame(share_rows), "shares", biz_day)
         else:
             log.warning("⚠️ 주식수 데이터 없음")
 
     elapsed = datetime.now() - start
     log.info(f"🎉 전체 수집 완료 (소요: {elapsed})")
-    log.info(f"📁 저장 폴더: {DATA_DIR.resolve()}")
+    log.info(f"📁 DB: {_db.config.DB_PATH}")
 
 
 def main():

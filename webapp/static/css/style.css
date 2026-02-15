@@ -9,8 +9,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .summary-card .metric-value { font-size: 1.4rem; font-weight: 700; }
 
 /* Screening tabs */
-#screen-tabs .nav-link { font-size: .85rem; font-weight: 500; }
-#screen-tabs .nav-link.active { font-weight: 700; }
+#screen-tabs .nav-link { font-size: .85rem; font-weight: 500; cursor: help; border-bottom: 1px dotted rgba(0, 0, 0, 0.15); }
+#screen-tabs .nav-link:hover { background-color: rgba(13, 110, 253, 0.05); }
+#screen-tabs .nav-link.active { font-weight: 700; border-bottom: none; }
 
 /* Table */
 #stock-table th { cursor: pointer; user-select: none; white-space: nowrap; font-size: .78rem; }
@@ -26,9 +27,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 
 /* Detail modal metric grid */
 .metric-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.metric-pill { padding: 6px 12px; border-radius: 6px; background: #f0f0f0; font-size: .82rem; }
+.metric-pill { padding: 6px 12px; border-radius: 6px; background: #f0f0f0; font-size: .82rem; cursor: help; transition: background-color 0.2s; }
+.metric-pill:hover { background-color: rgba(13, 110, 253, 0.1); }
 .metric-pill .lbl { color: #6c757d; font-size: .72rem; }
 .metric-pill .val { font-weight: 600; }
 
 /* Score bar */
 .score-bar { display: inline-block; height: 8px; border-radius: 4px; background: #0d6efd; min-width: 4px; }
+
+/* Tooltip hover indicators */
+[data-bs-toggle="tooltip"] { cursor: help; border-bottom: 1px dotted rgba(0, 0, 0, 0.15); }
+[data-bs-toggle="tooltip"]:hover { background-color: rgba(13, 110, 253, 0.05); border-radius: 2px; }
+
+/* Advanced filter panel */
+#adv-filter-panel { max-height: 200px; overflow-y: auto; }
+.col-filter { font-size: .75rem; }
+#column-filters { flex-wrap: wrap; }
+#column-filters .col-auto { margin-bottom: 0.5rem; }

@@ -1,13 +1,12 @@
 """
-Flask web application – CSV-based API for the Quant dashboard.
-Reads dashboard_result.csv produced by the pipeline and serves it
+Flask web application – SQLite-based API for the Quant dashboard.
+Reads dashboard_result from SQLite DB produced by the pipeline and serves it
 with server-side filtering, sorting, and pagination.
 """
 
 import logging
 import os
 import threading
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,6 +14,7 @@ from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 
 import config
+import db as _db
 
 log = logging.getLogger(__name__)
 
@@ -27,8 +27,6 @@ CORS(app)
 
 # ── In-memory data cache ──
 _cache: dict = {"df": pd.DataFrame(), "mtime": 0}
-
-RESULT_CSV = config.DATA_DIR / "dashboard_result.csv"
 
 # Columns exposed to the frontend
 DISPLAY_COLS = [
@@ -48,20 +46,23 @@ DISPLAY_COLS = [
 
 
 def _load_data() -> pd.DataFrame:
-    """Load (or reload) dashboard CSV into cache."""
-    if not RESULT_CSV.exists():
+    """Load (or reload) dashboard data from DB into cache."""
+    db_path = str(config.DB_PATH)
+    if not os.path.exists(db_path):
         _cache["df"] = pd.DataFrame()
         _cache["mtime"] = 0
         return _cache["df"]
 
-    mtime = os.path.getmtime(RESULT_CSV)
+    mtime = os.path.getmtime(db_path)
     if mtime != _cache["mtime"]:
-        df = pd.read_csv(RESULT_CSV, encoding="utf-8-sig", dtype={"종목코드": str})
-        df["종목코드"] = df["종목코드"].str.zfill(6)
-        df = df.replace({np.nan: None})
+        df = _db.load_dashboard()
+        if not df.empty:
+            if "종목코드" in df.columns:
+                df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+            df = df.replace({np.nan: None})
         _cache["df"] = df
         _cache["mtime"] = mtime
-        log.info("Loaded %d rows from %s", len(df), RESULT_CSV.name)
+        log.info("Loaded %d rows from DB (dashboard_result)", len(df))
 
     return _cache["df"]
 
@@ -106,6 +107,8 @@ def api_stocks():
         order   – asc / desc
         page    – page number (1-based)
         size    – page size (max 200)
+        min_*   – minimum value for column (e.g., min_PER=10)
+        max_*   – maximum value for column (e.g., max_PER=20)
     """
     df = _load_data()
     if df.empty:
@@ -144,6 +147,23 @@ def api_stocks():
             | filtered["종목코드"].str.contains(q, case=False, na=False)
         )
         filtered = filtered[mask]
+
+    # ── Column range filters ──
+    for key, val in request.args.items():
+        if key.startswith("min_"):
+            col = key[4:]  # Remove "min_" prefix
+            if col in filtered.columns:
+                try:
+                    filtered = filtered[filtered[col] >= float(val)]
+                except (ValueError, TypeError):
+                    pass
+        elif key.startswith("max_"):
+            col = key[4:]  # Remove "max_" prefix
+            if col in filtered.columns:
+                try:
+                    filtered = filtered[filtered[col] <= float(val)]
+                except (ValueError, TypeError):
+                    pass
 
     total = len(filtered)
 
@@ -214,18 +234,19 @@ def api_batch_trigger():
 
 @app.route("/api/data/status")
 def api_data_status():
-    """Check what data files exist."""
-    files = {}
-    for name in ["master", "daily", "financial_statements", "indicators", "shares", "dashboard_result"]:
-        candidates = list(config.DATA_DIR.glob(f"{name}*.csv"))
-        if candidates:
-            latest = sorted(candidates)[-1]
-            files[name] = {
-                "file": latest.name,
-                "size_mb": round(latest.stat().st_size / 1_048_576, 2),
-                "modified": pd.Timestamp(latest.stat().st_mtime, unit="s").isoformat(),
-            }
-    return jsonify(files)
+    """Check what data exists in the DB."""
+    status = _db.get_data_status()
+
+    # DB 파일 크기 정보 추가
+    db_path = str(config.DB_PATH)
+    if os.path.exists(db_path):
+        status["_db"] = {
+            "file": config.DB_PATH.name,
+            "size_mb": round(os.path.getsize(db_path) / 1_048_576, 2),
+            "modified": pd.Timestamp(os.path.getmtime(db_path), unit="s").isoformat(),
+        }
+
+    return jsonify(status)
 
 
 # ─────────────────────────────────────────
@@ -274,13 +295,13 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
 
     elif name == "cashcow":
         mask = (
-            df["FCF수익률(%)"].notna() & (df["FCF수익률(%)"] >= 5)
-            & (df["이익품질_양호"] == 1)
-            & df["영업이익률(%)"].notna() & (df["영업이익률(%)"] >= 8)
+            df["ROE(%)"].notna() & (df["ROE(%)"] >= 10)
+            & df["영업이익률(%)"].notna() & (df["영업이익률(%)"] >= 10)
             & (
                 (df["부채비율(%)"].notna() & (df["부채비율(%)"] < 100))
                 | df["부채비율(%)"].isna()
             )
+            & (df["매출_연속성장"] >= 1)
             & (df["시가총액"] >= 50_000_000_000)
             & (df["TTM_순이익"] > 0)
         )

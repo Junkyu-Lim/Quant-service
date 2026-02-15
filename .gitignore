@@ -1,13 +1,15 @@
+# Python 관련
 __pycache__/
-*.pyc
-*.pyo
-*.db
-*.sqlite3
-.env
+*.py[cod]
+*$py.class
 venv/
-.venv/
-dist/
-*.egg-info/
-.idea/
-.vscode/
-data/
+.env
+
+# 데이터 파일 (매우 중요)
+data/*.db
+data/*.xlsx
+data/*.csv
+
+# 운영체제 관련
+.DS_Store
+Thumbs.db

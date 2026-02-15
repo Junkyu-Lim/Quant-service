@@ -81,33 +81,31 @@ def normalize_code(x):
         return np.nan
 
 
-def load_csv(prefix: str) -> pd.DataFrame:
-    candidates = list(DATA_DIR.glob(f"{prefix}_*.csv"))
-    if not candidates:
-        fallback = DATA_DIR / f"{prefix}.csv"
-        if fallback.exists():
-            candidates = [fallback]
-        else:
-            return pd.DataFrame()
+def load_table(prefix: str) -> pd.DataFrame:
+    import db as _db
+    df = _db.load_latest(prefix)
 
-    latest_file = sorted(candidates)[-1]
-    log.info(f"📂 로드: {latest_file.name}")
-
-    try:
-        df = pd.read_csv(latest_file, encoding="utf-8-sig", low_memory=False, dtype={'종목코드': str})
-        df.columns = df.columns.str.strip()
-
-        if "종목코드" in df.columns:
-            df["종목코드"] = df["종목코드"].apply(normalize_code)
-            df = df.dropna(subset=["종목코드"])
-
-        for col in ["값", "종가", "시가총액", "상장주식수"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+    if df.empty:
         return df
-    except Exception as e:
-        log.error(f"❌ 읽기 실패: {e}")
-        return pd.DataFrame()
+
+    df.columns = df.columns.str.strip()
+
+    if "종목코드" in df.columns:
+        df["종목코드"] = df["종목코드"].apply(normalize_code)
+        df = df.dropna(subset=["종목코드"])
+
+    # 기준일 정규화: "2023-12-31 00:00:00" → "2023-12-31"
+    if "기준일" in df.columns:
+        df["기준일"] = df["기준일"].astype(str).str[:10]
+
+    for col in ["값", "종가", "시가총액", "상장주식수"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
+
+
+# 하위 호환용 별칭
+load_csv = load_table
 
 
 def _should_exclude(account_name: str) -> bool:
@@ -524,7 +522,9 @@ def apply_momentum_screen(df):
             mom_df["영업이익률_최근"].rank(pct=True) * 1.0 +
             mom_df["이익률_개선"].rank(pct=True) * 1.0
         )
-    return mom_df.sort_values("모멘텀_점수", ascending=False)
+    if "모멘텀_점수" in mom_df.columns:
+        return mom_df.sort_values("모멘텀_점수", ascending=False)
+    return mom_df
 
 
 def apply_garp_screen(df):
@@ -557,42 +557,47 @@ def apply_garp_screen(df):
             g["이익률_개선"].fillna(0) * 0.5 +               # 이익률 개선 보너스
             g["S_괴리율"] / 100 * 1.0                        # S-RIM 저평가 보너스
         )
-    return g.sort_values("GARP_점수", ascending=False)
+    if "GARP_점수" in g.columns:
+        return g.sort_values("GARP_점수", ascending=False)
+    return g
 
 
 def apply_cashcow_screen(df):
     """
-    ④ 캐시카우 (현금흐름 우량) — 버핏 스타일
-    조건:
-      - FCF 수익률 ≥ 5% (현금 창출력)
-      - 영업CF > 순이익 (이익 품질 양호)
+    ④ 캐시카우 (고수익 우량주) — 버핏 스타일
+    조건 (안정적 지표 기반):
+      - ROE ≥ 10% (높은 자본 수익성)
+      - 영업이익률 ≥ 10% (높은 마진)
       - 부채비율 < 100% (또는 무차입)
-      - 영업이익률 ≥ 8%
+      - 매출 연속성장 ≥ 1년
       - 시총 500억+
+      - 흑자
     """
     mask = (
-        pd.notna(df["FCF수익률(%)"]) & (df["FCF수익률(%)"] >= 5) &
-        (df["이익품질_양호"] == 1) &
-        pd.notna(df["영업이익률(%)"]) & (df["영업이익률(%)"] >= 8) &
+        pd.notna(df["ROE(%)"]) & (df["ROE(%)"] >= 10) &
+        pd.notna(df["영업이익률(%)"]) & (df["영업이익률(%)"] >= 10) &
         (
             (pd.notna(df["부채비율(%)"]) & (df["부채비율(%)"] < 100)) |
             df["부채비율(%)"].isna()
         ) &
+        (df["매출_연속성장"] >= 1) &
         (df["시가총액"] >= 50_000_000_000) &
         (df["TTM_순이익"] > 0)
     )
     c = df[mask].copy()
     if not c.empty:
         c["캐시카우_점수"] = (
-            c["FCF수익률(%)"].rank(pct=True) * 3.0 +                         # FCF 수익률
-            c["영업이익률(%)"].rank(pct=True) * 2.0 +                         # 영업이익률
-            c["ROE(%)"].rank(pct=True) * 1.5 +                               # ROE
-            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 1.5 +          # 저부채 선호
-            c["매출_연속성장"].fillna(0).rank(pct=True) * 0.5 +              # 안정 성장
+            c["ROE(%)"].rank(pct=True) * 2.5 +                               # ROE
+            c["영업이익률(%)"].rank(pct=True) * 2.5 +                         # 영업이익률
+            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 2.0 +          # 저부채 선호
+            c["매출_연속성장"].fillna(0).rank(pct=True) * 1.0 +              # 안정 성장
+            (1 - c["PER"].clip(1, 100).rank(pct=True)) * 1.0 +              # 저PER
             c["배당수익률(%)"].rank(pct=True) * 0.5 +                         # 배당 보너스
-            c["S_괴리율"] / 100 * 1.0                                        # S-RIM 저평가
+            c["S_괴리율"] / 100 * 0.5                                        # S-RIM 저평가
         )
-    return c.sort_values("캐시카우_점수", ascending=False)
+    if "캐시카우_점수" in c.columns:
+        return c.sort_values("캐시카우_점수", ascending=False)
+    return c
 
 
 def apply_turnaround_screen(df):
@@ -624,7 +629,9 @@ def apply_turnaround_screen(df):
             t["이익률_급개선"].fillna(0) * 1.0 +                      # 급개선 보너스
             t["S_괴리율"] / 100 * 1.0                                 # S-RIM 저평가
         )
-    return t.sort_values("턴어라운드_점수", ascending=False)
+    if "턴어라운드_점수" in t.columns:
+        return t.sort_values("턴어라운드_점수", ascending=False)
+    return t
 
 
 # ═════════════════════════════════════════════
@@ -722,11 +729,11 @@ def save_to_excel(df, filepath, sheet_name="Result"):
 # ═════════════════════════════════════════════
 
 def run():
-    master = load_csv("master")
-    daily = load_csv("daily")
-    fs = load_csv("financial_statements")
-    ind = load_csv("indicators")
-    shares = load_csv("shares")
+    master = load_table("master")
+    daily = load_table("daily")
+    fs = load_table("financial_statements")
+    ind = load_table("indicators")
+    shares = load_table("shares")
 
     if daily.empty:
         log.error("❌ daily 없음")

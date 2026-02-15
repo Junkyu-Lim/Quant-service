@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude update:*)",
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "Bash(wc:*)"
+    ]
+  }
+}

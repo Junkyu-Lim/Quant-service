@@ -5,6 +5,9 @@ BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+# SQLite database
+DB_PATH = DATA_DIR / "quant.db"
+
 # Batch schedule (cron-style)
 BATCH_HOUR = int(os.environ.get("BATCH_HOUR", "18"))   # 18시 KST (장 마감 후)
 BATCH_MINUTE = int(os.environ.get("BATCH_MINUTE", "0"))

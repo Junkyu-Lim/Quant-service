@@ -59,6 +59,10 @@
     </li>
   </ul>
 
+  <!-- Strategy description -->
+  <div id="strategy-desc" class="alert alert-light mb-3 py-2 px-3 border-start-0 border-end-0 border-bottom rounded-0" style="font-size: 0.9rem; line-height: 1.6;">
+  </div>
+
   <!-- Filters -->
   <div class="card border-top-0 rounded-top-0 mb-3">
     <div class="card-body py-2">
@@ -78,8 +82,14 @@
         <div class="col-auto">
           <button type="submit" class="btn btn-primary btn-sm">Filter</button>
           <button type="button" id="btn-clear" class="btn btn-outline-secondary btn-sm">Clear</button>
+          <button type="button" id="btn-adv-filter" class="btn btn-outline-info btn-sm">Advanced ▼</button>
         </div>
       </form>
+    </div>
+
+    <!-- Advanced Column Filters (initially hidden) -->
+    <div id="adv-filter-panel" class="card-body py-2 border-top" style="display: none; background: #f9f9f9;">
+      <div class="row g-2" id="column-filters"></div>
     </div>
   </div>
 

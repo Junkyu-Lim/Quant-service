@@ -1,14 +1,15 @@
 """
 Pipeline orchestrator: runs quant_collector_enhanced → quant_screener
-and saves a dashboard-ready CSV alongside the Excel outputs.
+and saves dashboard results to SQLite alongside the Excel outputs.
 """
 
 import logging
 from datetime import datetime
 
+import db as _db
 from quant_collector_enhanced import run_full as collector_run, test_crawling
 from quant_screener import (
-    load_csv,
+    load_table,
     preprocess_indicators,
     detect_unit_multiplier,
     analyze_all,
@@ -30,17 +31,19 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
 
     Args:
         skip_collect: If True, skip collection and only run screener
-            (useful when CSV data already exists).
+            (useful when data already exists in DB).
         test_mode: If True, only collect 3 sample stocks.
     """
     start = datetime.now()
     log.info("Pipeline started at %s", start.strftime("%Y-%m-%d %H:%M:%S"))
 
+    _db.init_db()
+
     # ── Step 1: Collect ──
     if not skip_collect:
         if test_mode:
             log.info("Running collector in TEST mode (3 stocks)...")
-            test_crawling()
+            collector_run(test_mode=True)
         else:
             log.info("Running full collector...")
             collector_run()
@@ -49,14 +52,14 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
 
     # ── Step 2: Screen & Analyse ──
     log.info("Running screener...")
-    master = load_csv("master")
-    daily = load_csv("daily")
-    fs = load_csv("financial_statements")
-    ind = load_csv("indicators")
-    shares = load_csv("shares")
+    master = load_table("master")
+    daily = load_table("daily")
+    fs = load_table("financial_statements")
+    ind = load_table("indicators")
+    shares = load_table("shares")
 
     if daily.empty:
-        log.error("daily CSV not found – cannot run screener")
+        log.error("daily data not found in DB – cannot run screener")
         return
 
     ind = preprocess_indicators(ind)
@@ -69,10 +72,9 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
         master_info = master[["종목코드", "시장구분", "종목구분"]].drop_duplicates("종목코드")
         full_df = full_df.merge(master_info, on="종목코드", how="left")
 
-    # ── Save dashboard CSV (for fast webapp loading) ──
-    dashboard_csv = DATA_DIR / "dashboard_result.csv"
-    full_df.to_csv(dashboard_csv, index=False, encoding="utf-8-sig")
-    log.info("Dashboard CSV saved: %s (%d rows)", dashboard_csv.name, len(full_df))
+    # ── Save dashboard to DB ──
+    _db.save_dashboard(full_df)
+    log.info("Dashboard saved to DB (%d rows)", len(full_df))
 
     # ── Save Excel outputs (same as original screener) ──
     save_to_excel(
