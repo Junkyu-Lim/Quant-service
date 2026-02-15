@@ -1,5 +1,5 @@
 {
-  "buildCommand": "uv pip install -r requirements.txt",
+  "buildCommand": "uv pip install --system -r requirements.txt",
   "env": {
     "BATCH_HOUR": "18",
     "BATCH_MINUTE": "0",
