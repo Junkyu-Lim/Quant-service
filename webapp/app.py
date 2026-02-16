@@ -34,6 +34,7 @@ DISPLAY_COLS = [
     "PER", "PBR", "PSR", "PEG", "ROE(%)", "EPS", "BPS",
     "부채비율(%)", "영업이익률(%)", "이익수익률(%)", "FCF수익률(%)",
     "배당수익률(%)", "이익품질_양호", "현금전환율(%)", "CAPEX비율(%)",
+    "부채상환능력", "F스코어",
     "매출_CAGR", "영업이익_CAGR", "순이익_CAGR", "영업CF_CAGR", "FCF_CAGR",
     "매출_연속성장", "영업이익_연속성장", "순이익_연속성장", "영업CF_연속성장",
     "이익률_개선", "이익률_급개선", "이익률_변동폭",
@@ -41,7 +42,7 @@ DISPLAY_COLS = [
     "적정주가_SRIM", "괴리율(%)",
     "종합점수",
     "TTM_매출", "TTM_영업이익", "TTM_순이익", "TTM_영업CF", "TTM_CAPEX", "TTM_FCF",
-    "자본", "부채",
+    "자본", "부채", "자산총계",
 ]
 
 
@@ -264,6 +265,7 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
             & (df["매출_연속성장"] >= 2)
             & (df["순이익_연속성장"] >= 1)
             & (df["시가총액"] >= 50_000_000_000)
+            & (df["F스코어"] >= 5)
         )
         if "PER_이상" in df.columns:
             mask = mask & (df["PER_이상"] == "")
@@ -305,6 +307,7 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
             & (df["시가총액"] >= 50_000_000_000)
             & (df["TTM_순이익"] > 0)
             & (df["이익품질_양호"] == 1)
+            & (df["F스코어"] >= 6)
         )
         return df[mask]
 
