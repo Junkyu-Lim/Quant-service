@@ -354,7 +354,7 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
         if annual_dps:
             dps_series = find_account_value(dps_data, "배당금", annual_dps)
 
-    result["DPS_최근"] = list(dps_series.values())[-1] if dps_series else 0
+    result["DPS_최근"] = list(dps_series.values())[-1] if dps_series else np.nan
     result["DPS_CAGR"] = calc_cagr(dps_series)
     result["배당_연속증가"] = count_consecutive_growth(dps_series)
 
@@ -446,38 +446,40 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
     # 검증 플래그
     df["PER_이상"] = np.where((df["PER"] < 0.5) | (df["PER"] > 500), "⚠️", "")
 
-    # ── 스코어링 ──
-    df["S_PER"] = (1 - df["PER"].rank(pct=True, na_option='bottom')) * 100
-    df["S_PBR"] = (1 - df["PBR"].rank(pct=True, na_option='bottom')) * 100
-    df["S_ROE"] = df["ROE(%)"].rank(pct=True, na_option='bottom') * 100
+    # ── 스코어링 (NaN은 순위에서 제외 → NaN 유지, 스크리닝 단계에서 필터) ──
+    df["S_PER"] = (1 - df["PER"].rank(pct=True, na_option='keep')) * 100
+    df["S_PBR"] = (1 - df["PBR"].rank(pct=True, na_option='keep')) * 100
+    df["S_ROE"] = df["ROE(%)"].rank(pct=True, na_option='keep') * 100
 
-    df["S_매출CAGR"] = df["매출_CAGR"].rank(pct=True, na_option='bottom') * 100
-    df["S_영업이익CAGR"] = df["영업이익_CAGR"].rank(pct=True, na_option='bottom') * 100
-    df["S_순이익CAGR"] = df["순이익_CAGR"].rank(pct=True, na_option='bottom') * 100
+    df["S_매출CAGR"] = df["매출_CAGR"].rank(pct=True, na_option='keep') * 100
+    df["S_영업이익CAGR"] = df["영업이익_CAGR"].rank(pct=True, na_option='keep') * 100
+    df["S_순이익CAGR"] = df["순이익_CAGR"].rank(pct=True, na_option='keep') * 100
 
+    # 연속성장: 각 항목 0~5년을 0~100으로 정규화 후 평균
     df["S_연속성장"] = (
-        df["매출_연속성장"].fillna(0).clip(0, 5) * 5 +
-        df["영업이익_연속성장"].fillna(0).clip(0, 5) * 5 +
-        df["순이익_연속성장"].fillna(0).clip(0, 5) * 5
-    )
+        df["매출_연속성장"].fillna(0).clip(0, 5) / 5 * 100 +
+        df["영업이익_연속성장"].fillna(0).clip(0, 5) / 5 * 100 +
+        df["순이익_연속성장"].fillna(0).clip(0, 5) / 5 * 100
+    ) / 3
 
-    df["S_이익률개선"] = df["이익률_개선"].fillna(0) * 50
-    df["S_배당수익률"] = df["배당수익률(%)"].rank(pct=True, na_option='bottom') * 100
-    df["S_배당연속증가"] = df["배당_연속증가"].fillna(0).clip(0, 5) * 15
-    df["S_괴리율"] = df["괴리율(%)"].rank(pct=True, na_option='bottom') * 100
+    # 이익률 변동폭 연속값 사용 (이진 플래그 대신 실제 개선폭 반영)
+    df["S_이익률개선"] = df["이익률_변동폭"].rank(pct=True, na_option='keep') * 100
+    df["S_배당수익률"] = df["배당수익률(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_배당연속증가"] = df["배당_연속증가"].fillna(0).clip(0, 5) / 5 * 100
+    df["S_괴리율"] = df["괴리율(%)"].rank(pct=True, na_option='keep') * 100
 
     df["종합점수"] = (
-        df["S_PER"] * 1.0 +
-        df["S_PBR"] * 0.5 +
-        df["S_ROE"] * 2.5 +
-        df["S_매출CAGR"] * 2.0 +
-        df["S_영업이익CAGR"] * 2.0 +
-        df["S_순이익CAGR"] * 0.5 +
-        df["S_연속성장"] * 1.0 +
-        df["S_이익률개선"] * 1.0 +
-        df["S_배당수익률"] * 0.5 +
-        df["S_배당연속증가"] * 0.5 +
-        df["S_괴리율"] * 1.0
+        df["S_PER"].fillna(0) * 1.0 +
+        df["S_PBR"].fillna(0) * 0.5 +
+        df["S_ROE"].fillna(0) * 2.5 +
+        df["S_매출CAGR"].fillna(0) * 2.0 +
+        df["S_영업이익CAGR"].fillna(0) * 2.0 +
+        df["S_순이익CAGR"].fillna(0) * 0.5 +
+        df["S_연속성장"].fillna(0) * 1.0 +
+        df["S_이익률개선"].fillna(0) * 1.0 +
+        df["S_배당수익률"].fillna(0) * 0.5 +
+        df["S_배당연속증가"].fillna(0) * 0.5 +
+        df["S_괴리율"].fillna(0) * 1.0
     )
 
     return df
@@ -572,6 +574,7 @@ def apply_cashcow_screen(df):
       - 매출 연속성장 ≥ 1년
       - 시총 500억+
       - 흑자
+      - 이익품질 양호 (영업CF > 순이익)
     """
     mask = (
         pd.notna(df["ROE(%)"]) & (df["ROE(%)"] >= 10) &
@@ -582,18 +585,20 @@ def apply_cashcow_screen(df):
         ) &
         (df["매출_연속성장"] >= 1) &
         (df["시가총액"] >= 50_000_000_000) &
-        (df["TTM_순이익"] > 0)
+        (df["TTM_순이익"] > 0) &
+        (df["이익품질_양호"] == 1)
     )
     c = df[mask].copy()
     if not c.empty:
         c["캐시카우_점수"] = (
-            c["ROE(%)"].rank(pct=True) * 2.5 +                               # ROE
-            c["영업이익률(%)"].rank(pct=True) * 2.5 +                         # 영업이익률
-            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 2.0 +          # 저부채 선호
+            c["ROE(%)"].rank(pct=True) * 2.0 +                               # ROE
+            c["영업이익률(%)"].rank(pct=True) * 2.0 +                         # 영업이익률
+            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 1.5 +          # 저부채 선호
+            c["FCF수익률(%)"].fillna(0).rank(pct=True) * 2.5 +               # FCF 수익률 (핵심)
             c["매출_연속성장"].fillna(0).rank(pct=True) * 1.0 +              # 안정 성장
             (1 - c["PER"].clip(1, 100).rank(pct=True)) * 1.0 +              # 저PER
             c["배당수익률(%)"].rank(pct=True) * 0.5 +                         # 배당 보너스
-            c["S_괴리율"] / 100 * 0.5                                        # S-RIM 저평가
+            c["S_괴리율"].fillna(0) / 100 * 0.5                              # S-RIM 저평가
         )
     if "캐시카우_점수" in c.columns:
         return c.sort_values("캐시카우_점수", ascending=False)

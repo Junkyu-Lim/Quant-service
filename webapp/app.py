@@ -304,6 +304,7 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
             & (df["매출_연속성장"] >= 1)
             & (df["시가총액"] >= 50_000_000_000)
             & (df["TTM_순이익"] > 0)
+            & (df["이익품질_양호"] == 1)
         )
         return df[mask]
 
