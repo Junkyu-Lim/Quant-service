@@ -331,20 +331,44 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
         result["순이익_당기양수"] = 0
         result["흑자전환"] = 0
 
-    # ── [v6] 영업CF (캐시카우용) ──
-    ttm_ocf = np.nan
+    # ── [v7] 영업CF / CAPEX / FCF 시계열 + TTM ──
+    ocf_series, capex_series = {}, {}
+
+    # 1) indicators(RATIO_Y)에서 연도별 시계열 추출
     if has_ind:
         y_data = ind_grp[ind_grp["지표구분"] == "RATIO_Y"]
-        ocf_dict = find_account_value(y_data, "영업CF", annual_dates if 'annual_dates' in dir() else None)
-        if ocf_dict:
-            ttm_ocf = ocf_dict[max(ocf_dict.keys())]
-    if pd.isna(ttm_ocf) and has_fs:
-        # 재무제표 CF에서 시도
-        cf_grp = fs_grp[fs_grp["계정"].str.contains("영업활동", na=False)]
-        if not cf_grp.empty:
-            last_cf = cf_grp.sort_values("기준일").iloc[-1]
-            ttm_ocf = float(last_cf["값"]) if pd.notna(last_cf["값"]) else np.nan
+        ad = annual_dates if 'annual_dates' in dir() else None
+        ocf_series = find_account_value(y_data, "영업CF", ad)
+        capex_series = find_account_value(y_data, "CAPEX", ad)
+
+    # 2) indicators에 없으면 financial_statements(CF)에서 fallback
+    if not ocf_series and has_fs:
+        fs_y = fs_grp[(fs_grp["주기"] == "y")]
+        ocf_series = find_account_value(fs_y, "영업CF")
+    if not capex_series and has_fs:
+        fs_y = fs_grp[(fs_grp["주기"] == "y")]
+        capex_series = find_account_value(fs_y, "CAPEX")
+
+    # CAPEX는 FnGuide에서 음수로 기재되므로 절대값 처리
+    capex_series = {d: abs(v) for d, v in capex_series.items()}
+
+    # 3) FCF 시계열 (영업CF - CAPEX, 동일 연도만)
+    fcf_series = {}
+    common_dates = set(ocf_series.keys()) & set(capex_series.keys())
+    for d in common_dates:
+        fcf_series[d] = ocf_series[d] - capex_series[d]
+
+    # TTM 값 (최신 연도)
+    ttm_ocf = ocf_series[max(ocf_series.keys())] if ocf_series else np.nan
+    ttm_capex = capex_series[max(capex_series.keys())] if capex_series else np.nan
+    ttm_fcf = fcf_series[max(fcf_series.keys())] if fcf_series else np.nan
+
     result["TTM_영업CF"] = ttm_ocf
+    result["TTM_CAPEX"] = ttm_capex
+    result["TTM_FCF"] = ttm_fcf
+    result["영업CF_CAGR"] = calc_cagr(ocf_series)
+    result["FCF_CAGR"] = calc_cagr(fcf_series)
+    result["영업CF_연속성장"] = count_consecutive_growth(ocf_series)
 
     # ── 배당 ──
     dps_series = {}
@@ -422,10 +446,22 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
         (df["EPS"] / df["종가"]) * 100, np.nan
     )
 
-    # FCF 수익률 (영업CF 기반 근사) — 캐시카우용
+    # FCF 수익률 (진짜 FCF = 영업CF - CAPEX)
     df["FCF수익률(%)"] = np.where(
-        pd.notna(df["TTM_영업CF"]) & (df["시가총액"] > 0),
-        (df["TTM_영업CF"] * M / df["시가총액"]) * 100, np.nan
+        pd.notna(df["TTM_FCF"]) & (df["시가총액"] > 0),
+        (df["TTM_FCF"] * M / df["시가총액"]) * 100, np.nan
+    )
+
+    # 현금전환율 (영업CF / 순이익 × 100, 100% 이상이면 이익이 현금으로 뒷받침됨)
+    df["현금전환율(%)"] = np.where(
+        pd.notna(df["TTM_영업CF"]) & pd.notna(df["TTM_순이익"]) & (df["TTM_순이익"] > 0),
+        (df["TTM_영업CF"] / df["TTM_순이익"]) * 100, np.nan
+    )
+
+    # CAPEX 비율 (CAPEX / 영업CF × 100, 낮을수록 경자산 비즈니스)
+    df["CAPEX비율(%)"] = np.where(
+        pd.notna(df["TTM_CAPEX"]) & pd.notna(df["TTM_영업CF"]) & (df["TTM_영업CF"] > 0),
+        (df["TTM_CAPEX"] / df["TTM_영업CF"]) * 100, np.nan
     )
 
     # 영업CF > 순이익 (이익 품질 플래그)
