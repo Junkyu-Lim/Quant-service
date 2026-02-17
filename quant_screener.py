@@ -228,6 +228,119 @@ def count_consecutive_growth(series_dict):
     return count
 
 
+def _quarter_key(date_str):
+    """분기 날짜 → (월-일) 키. 예: '2024-09-30' → '09-30'"""
+    return date_str[5:10]
+
+
+def _prev_year_date(date_str):
+    """분기 날짜의 전년 동기 날짜. 예: '2024-09-30' → '2023-09-30'"""
+    try:
+        y = int(date_str[:4])
+        return f"{y - 1}{date_str[4:]}"
+    except (ValueError, IndexError):
+        return None
+
+
+def calc_quarterly_yoy(q_data, key):
+    """분기별 전년동기비(YoY) 성장률을 계산.
+
+    Returns:
+        dict: {
+            'latest_yoy': float or NaN (최근 분기 YoY %),
+            'consecutive_yoy_growth': int (연속 YoY 성장 분기 수),
+            'latest_quarter': str (최근 분기 날짜),
+            'yoy_series': dict (날짜 → YoY% 시계열),
+        }
+    """
+    result = {
+        "latest_yoy": np.nan,
+        "consecutive_yoy_growth": 0,
+        "latest_quarter": "",
+        "yoy_series": {},
+    }
+
+    q_dates = sorted(q_data["기준일"].unique())
+    if len(q_dates) < 5:  # 최소 5개 분기 (4분기 + 전년 1개)
+        return result
+
+    # 분기별 값 추출
+    vals = find_account_value(q_data, key)
+    if len(vals) < 5:
+        return result
+
+    # YoY 계산: 각 분기에 대해 전년 동분기와 비교
+    yoy_series = {}
+    for date_str in sorted(vals.keys()):
+        prev_date = _prev_year_date(date_str)
+        if prev_date and prev_date in vals:
+            prev_val = vals[prev_date]
+            curr_val = vals[date_str]
+            if prev_val > 0:
+                yoy_series[date_str] = ((curr_val / prev_val) - 1) * 100
+            elif prev_val < 0 and curr_val > 0:
+                # 전년 적자 → 올해 흑자: 특수 케이스
+                yoy_series[date_str] = np.nan  # 흑전은 %로 표현 부적절
+
+    if not yoy_series:
+        return result
+
+    result["yoy_series"] = yoy_series
+    result["latest_quarter"] = max(yoy_series.keys())
+    result["latest_yoy"] = yoy_series[result["latest_quarter"]]
+
+    # 연속 YoY 성장 카운트 (최근부터 역순)
+    sorted_dates = sorted(yoy_series.keys(), reverse=True)
+    count = 0
+    for d in sorted_dates:
+        yoy_val = yoy_series[d]
+        if pd.notna(yoy_val) and yoy_val > 0:
+            count += 1
+        else:
+            break
+    result["consecutive_yoy_growth"] = count
+
+    return result
+
+
+def calc_ttm_yoy(q_data, key):
+    """TTM(최근 4분기 합) vs 전년 TTM(1년 전 4분기 합) 비교.
+
+    Returns:
+        dict: {
+            'ttm_current': float or NaN,
+            'ttm_prev': float or NaN,
+            'ttm_yoy': float or NaN (YoY %),
+        }
+    """
+    result = {"ttm_current": np.nan, "ttm_prev": np.nan, "ttm_yoy": np.nan}
+
+    q_dates = sorted(q_data["기준일"].unique())
+    if len(q_dates) < 8:  # 최근 4분기 + 전년 4분기
+        return result
+
+    vals = find_account_value(q_data, key)
+    if len(vals) < 8:
+        return result
+
+    sorted_dates = sorted(vals.keys())
+    last4 = sorted_dates[-4:]
+    prev4 = sorted_dates[-8:-4]
+
+    ttm_curr = sum(vals[d] for d in last4 if d in vals)
+    ttm_prev = sum(vals[d] for d in prev4 if d in vals)
+
+    if len([d for d in last4 if d in vals]) == 4:
+        result["ttm_current"] = ttm_curr
+    if len([d for d in prev4 if d in vals]) == 4:
+        result["ttm_prev"] = ttm_prev
+
+    if pd.notna(result["ttm_current"]) and pd.notna(result["ttm_prev"]) and result["ttm_prev"] > 0:
+        result["ttm_yoy"] = ((result["ttm_current"] / result["ttm_prev"]) - 1) * 100
+
+    return result
+
+
 # ═════════════════════════════════════════════
 # 종목별 펀더멘털 분석 (v6: 턴어라운드/캐시카우 필드 추가)
 # ═════════════════════════════════════════════
@@ -266,6 +379,30 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
         if pd.notna(ttm_rev): ttm_source = "있음"
 
     result.update({"TTM_매출": ttm_rev, "TTM_영업이익": ttm_op, "TTM_순이익": ttm_ni, "TTM_소스": ttm_source})
+
+    # ── 계절성 통제: 분기별 YoY 성장률 & TTM YoY ──
+    if has_ind:
+        q_data_all = ind_grp[ind_grp["지표구분"] == "RATIO_Q"]
+
+        for label, key in [("매출", "매출액"), ("영업이익", "영업이익"), ("순이익", "순이익")]:
+            # 분기별 YoY (전년동기비)
+            qyoy = calc_quarterly_yoy(q_data_all, key)
+            result[f"Q_{label}_YoY(%)"] = qyoy["latest_yoy"]
+            result[f"Q_{label}_연속YoY성장"] = qyoy["consecutive_yoy_growth"]
+
+            # TTM YoY (최근4분기 합 vs 전년4분기 합)
+            ttm_yoy = calc_ttm_yoy(q_data_all, key)
+            result[f"TTM_{label}_YoY(%)"] = ttm_yoy["ttm_yoy"]
+
+        # 최근 분기 날짜 (참조용)
+        q_dates_sorted = sorted(q_data_all["기준일"].unique())
+        result["최근분기"] = q_dates_sorted[-1] if q_dates_sorted else ""
+    else:
+        for label in ["매출", "영업이익", "순이익"]:
+            result[f"Q_{label}_YoY(%)"] = np.nan
+            result[f"Q_{label}_연속YoY성장"] = 0
+            result[f"TTM_{label}_YoY(%)"] = np.nan
+        result["최근분기"] = ""
 
     # ── 자본/부채 ──
     curr_equity, curr_debt = np.nan, np.nan
@@ -652,6 +789,16 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
     df["S_F스코어"] = df["F스코어"].rank(pct=True, na_option='keep') * 100
     df["S_FCF수익률"] = df["FCF수익률(%)"].rank(pct=True, na_option='keep') * 100
 
+    # 계절성 통제 스코어 (분기 YoY 기반)
+    df["S_Q매출YoY"] = df["Q_매출_YoY(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_Q영업이익YoY"] = df["Q_영업이익_YoY(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_TTM매출YoY"] = df["TTM_매출_YoY(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_TTM영업이익YoY"] = df["TTM_영업이익_YoY(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_Q연속YoY"] = (
+        df["Q_매출_연속YoY성장"].fillna(0).clip(0, 4) / 4 * 100 +
+        df["Q_영업이익_연속YoY성장"].fillna(0).clip(0, 4) / 4 * 100
+    ) / 2
+
     df["종합점수"] = (
         df["S_PER"].fillna(0) * 1.5 +
         df["S_PBR"].fillna(0) * 1.0 +
@@ -805,7 +952,7 @@ def apply_screen(df):
 
 
 def apply_momentum_screen(df):
-    """② 모멘텀/성장주 스크리닝"""
+    """② 모멘텀/성장주 스크리닝 (계절성 통제 강화)"""
     mask = (
         pd.notna(df["매출_CAGR"]) &
         pd.notna(df["영업이익_CAGR"]) &
@@ -818,14 +965,18 @@ def apply_momentum_screen(df):
     mom_df = df[mask].copy()
     if not mom_df.empty:
         mom_df["모멘텀_점수"] = (
-            mom_df["매출_CAGR"].rank(pct=True) * 2.5 +
-            mom_df["영업이익_CAGR"].rank(pct=True) * 3.0 +
+            mom_df["매출_CAGR"].rank(pct=True) * 2.0 +
+            mom_df["영업이익_CAGR"].rank(pct=True) * 2.5 +
             mom_df["ROE(%)"].rank(pct=True) * 1.5 +
-            mom_df["영업이익률_최근"].rank(pct=True) * 1.5 +
-            mom_df["이익률_개선"].rank(pct=True) * 1.0 +
-            mom_df["RSI_14"].fillna(50).rank(pct=True) * 1.5 +
-            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 1.5 +
-            mom_df["거래대금_증감(%)"].fillna(0).rank(pct=True) * 1.0
+            mom_df["영업이익률_최근"].rank(pct=True) * 1.0 +
+            mom_df["이익률_개선"].rank(pct=True) * 0.5 +
+            # 계절성 통제 지표 (분기 YoY)
+            mom_df["Q_매출_YoY(%)"].fillna(0).rank(pct=True) * 2.0 +
+            mom_df["Q_영업이익_YoY(%)"].fillna(0).rank(pct=True) * 2.0 +
+            mom_df["Q_매출_연속YoY성장"].fillna(0).clip(0, 4).rank(pct=True) * 1.5 +
+            mom_df["RSI_14"].fillna(50).rank(pct=True) * 1.0 +
+            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 1.0 +
+            mom_df["거래대금_증감(%)"].fillna(0).rank(pct=True) * 0.5
         )
     if "모멘텀_점수" in mom_df.columns:
         return mom_df.sort_values("모멘텀_점수", ascending=False)
@@ -1013,10 +1164,14 @@ def save_to_excel(df, filepath, sheet_name="Result"):
                     "배당수익률(%)", "이익품질_양호"],
         "배당": ["DPS_최근", "DPS_CAGR", "배당_연속증가", "배당_수익동반증가"],
         "점수": ["종합점수", "모멘텀_점수", "GARP_점수", "캐시카우_점수", "턴어라운드_점수", "배당성장_점수"],
-        "성장추세": ["매출_CAGR", "영업이익_CAGR", "순이익_CAGR",
-                    "매출_연속성장", "영업이익_연속성장", "순이익_연속성장",
-                    "이익률_개선", "이익률_급개선", "이익률_변동폭",
-                    "흑자전환", "영업이익률_최근", "영업이익률_전년"],
+        "성장추세(연간)": ["매출_CAGR", "영업이익_CAGR", "순이익_CAGR",
+                        "매출_연속성장", "영업이익_연속성장", "순이익_연속성장",
+                        "이익률_개선", "이익률_급개선", "이익률_변동폭",
+                        "흑자전환", "영업이익률_최근", "영업이익률_전년"],
+        "성장추세(분기YoY)": ["최근분기",
+                            "Q_매출_YoY(%)", "Q_영업이익_YoY(%)", "Q_순이익_YoY(%)",
+                            "Q_매출_연속YoY성장", "Q_영업이익_연속YoY성장", "Q_순이익_연속YoY성장",
+                            "TTM_매출_YoY(%)", "TTM_영업이익_YoY(%)", "TTM_순이익_YoY(%)"],
         "밸류에이션": ["적정주가_SRIM", "괴리율(%)"],
         "TTM_원본": ["TTM_매출", "TTM_영업이익", "TTM_순이익", "TTM_영업CF", "자본", "부채"],
     }
@@ -1036,7 +1191,8 @@ def save_to_excel(df, filepath, sheet_name="Result"):
         "기본정보": PatternFill("solid", fgColor="D6E4F0"),
         "주요지표": PatternFill("solid", fgColor="E2EFDA"),
         "점수": PatternFill("solid", fgColor="C6EFCE"),
-        "성장추세": PatternFill("solid", fgColor="FFF2CC"),
+        "성장추세(연간)": PatternFill("solid", fgColor="FFF2CC"),
+        "성장추세(분기YoY)": PatternFill("solid", fgColor="FCE4D6"),
         "밸류에이션": PatternFill("solid", fgColor="DAEEF3"),
         "TTM_원본": PatternFill("solid", fgColor="F2DCDB"),
     }
