@@ -97,12 +97,46 @@
           <button type="button" id="btn-clear" class="btn btn-outline-secondary btn-sm">Clear</button>
           <button type="button" id="btn-adv-filter" class="btn btn-outline-info btn-sm">Advanced ▼</button>
         </div>
+        <div class="col-auto ms-auto d-flex align-items-end gap-1">
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btn-load-preset" data-bs-toggle="dropdown" aria-expanded="false">
+              Presets
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end" id="preset-dropdown">
+              <li><span class="dropdown-item text-muted small">No saved presets</span></li>
+            </ul>
+          </div>
+          <button type="button" id="btn-save-preset" class="btn btn-outline-success btn-sm" title="Save current filters as preset">Save</button>
+        </div>
       </form>
     </div>
 
     <!-- Advanced Column Filters (initially hidden) -->
     <div id="adv-filter-panel" class="card-body py-2 border-top" style="display: none; background: #f9f9f9;">
       <div class="row g-2" id="column-filters"></div>
+    </div>
+  </div>
+
+  <!-- Save Preset Modal -->
+  <div class="modal fade" id="preset-save-modal" tabindex="-1">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title">Filter Preset Save</h6>
+          <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label small mb-1">Preset Name</label>
+            <input type="text" id="preset-name-input" class="form-control form-control-sm" placeholder="e.g. ROE>15 & PER<12">
+          </div>
+          <div id="preset-save-summary" class="small text-muted mb-2"></div>
+        </div>
+        <div class="modal-footer py-1">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" id="btn-confirm-save-preset" class="btn btn-success btn-sm">Save</button>
+        </div>
+      </div>
     </div>
   </div>
 
