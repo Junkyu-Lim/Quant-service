@@ -26,6 +26,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import config
+
 try:
     from tqdm import tqdm
 except ImportError:
@@ -41,7 +43,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("SCREENER")
 
-DATA_DIR = Path("./data")
+DATA_DIR = config.DATA_DIR
 
 
 # ─────────────────────────────────────────────
@@ -82,7 +84,7 @@ def normalize_code(x):
         if '.' in s:
             s = s.split('.')[0]
         return s.zfill(6)
-    except:
+    except (ValueError, AttributeError, TypeError):
         return np.nan
 
 
@@ -154,7 +156,8 @@ def find_account_value(df, target_key, date_filter=None):
             v = float(r["값"]) if pd.notna(r["값"]) else None
             if v is not None:
                 result[dt] = v
-        except:
+        except (ValueError, TypeError, KeyError):
+            # 값 변환 실패 시 무시
             pass
     return result
 
@@ -367,9 +370,10 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
     # 1) indicators(RATIO_Y)에서 연도별 시계열 추출
     if has_ind:
         y_data = ind_grp[ind_grp["지표구분"] == "RATIO_Y"]
-        ad = annual_dates if 'annual_dates' in dir() else None
-        ocf_series = find_account_value(y_data, "영업CF", ad)
-        capex_series = find_account_value(y_data, "CAPEX", ad)
+        # annual_dates 명시적 정의 (12-31로 끝나는 기준일만)
+        annual_dates = [d for d in sorted(y_data["기준일"].unique()) if str(d).endswith("12-31")]
+        ocf_series = find_account_value(y_data, "영업CF", annual_dates)
+        capex_series = find_account_value(y_data, "CAPEX", annual_dates)
 
     # 2) indicators에 없으면 financial_statements(CF)에서 fallback
     if not ocf_series and has_fs:
