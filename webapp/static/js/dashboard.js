@@ -809,8 +809,47 @@
   });
 
   // ── Pipeline trigger ──
-  document.getElementById("btn-trigger").addEventListener("click", async () => {
-    if (!confirm("Run the data pipeline now?")) return;
+  const btnTrigger  = document.getElementById("btn-trigger");
+  const btnSpinner  = document.getElementById("btn-trigger-spinner");
+  const btnLabel    = document.getElementById("btn-trigger-label");
+  let pipelinePoller = null;
+
+  function setPipelineRunning(running) {
+    btnTrigger.disabled = running;
+    btnSpinner.classList.toggle("d-none", !running);
+    btnLabel.textContent = running ? "Running…" : "Run Pipeline";
+  }
+
+  async function pollPipelineStatus() {
+    try {
+      const res = await fetch("/api/batch/status");
+      const data = await res.json();
+      if (!data.running) {
+        clearInterval(pipelinePoller);
+        pipelinePoller = null;
+        setPipelineRunning(false);
+        if (data.error) {
+          showToast("파이프라인 오류: " + data.error);
+        } else if (data.finished_at) {
+          showToast("파이프라인 완료! 데이터를 새로고침합니다.");
+          loadSummary();
+          loadTabCounts();
+          loadStocks();
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 페이지 로드 시 이미 실행 중이면 버튼 비활성화
+  fetch("/api/batch/status").then(r => r.json()).then(data => {
+    if (data.running) {
+      setPipelineRunning(true);
+      pipelinePoller = setInterval(pollPipelineStatus, 3000);
+    }
+  }).catch(() => {});
+
+  btnTrigger.addEventListener("click", async () => {
+    if (!confirm("Run the full data pipeline now?")) return;
     try {
       const res = await fetch("/api/batch/trigger", {
         method: "POST",
@@ -818,7 +857,13 @@
         body: JSON.stringify({}),
       });
       const data = await res.json();
+      if (res.status === 409) {
+        showToast(data.message);
+        return;
+      }
       showToast(data.message || "Pipeline triggered");
+      setPipelineRunning(true);
+      pipelinePoller = setInterval(pollPipelineStatus, 3000);
     } catch (err) { showToast("Failed to trigger pipeline"); }
   });
 

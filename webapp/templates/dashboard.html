@@ -15,7 +15,10 @@
     <a class="navbar-brand" href="/">Quant Dashboard</a>
     <div class="d-flex align-items-center gap-2">
       <button id="btn-refresh" class="btn btn-outline-light btn-sm">Refresh</button>
-      <button id="btn-trigger" class="btn btn-warning btn-sm">Run Pipeline</button>
+      <button id="btn-trigger" class="btn btn-warning btn-sm d-flex align-items-center gap-1">
+        <span id="btn-trigger-spinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+        <span id="btn-trigger-label">Run Pipeline</span>
+      </button>
     </div>
   </div>
 </nav>

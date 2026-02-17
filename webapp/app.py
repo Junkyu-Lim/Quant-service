@@ -30,6 +30,9 @@ CORS(app)
 # ── In-memory data cache ──
 _cache: dict = {"df": pd.DataFrame(), "mtime": 0}
 
+# ── Pipeline state ──
+_pipeline: dict = {"running": False, "started_at": None, "finished_at": None, "error": None}
+
 # Columns exposed to the frontend
 DISPLAY_COLS = [
     "종목코드", "종목명", "시장구분", "종가", "시가총액",
@@ -230,19 +233,48 @@ def api_market_summary():
     return jsonify(results)
 
 
+def _run_pipeline_tracked(**opts):
+    """run_pipeline을 감싸 _pipeline 상태를 업데이트한다."""
+    from pipeline import run_pipeline
+    from datetime import datetime
+    _pipeline["running"] = True
+    _pipeline["started_at"] = datetime.now().isoformat()
+    _pipeline["error"] = None
+    try:
+        run_pipeline(**opts)
+    except Exception as e:
+        _pipeline["error"] = str(e)
+        log.exception("Pipeline failed")
+    finally:
+        _pipeline["running"] = False
+        _pipeline["finished_at"] = datetime.now().isoformat()
+
+
 @app.route("/api/batch/trigger", methods=["POST"])
 def api_batch_trigger():
     """Manually trigger the pipeline in background."""
-    from pipeline import run_pipeline
+    if _pipeline["running"]:
+        return jsonify({"status": "already_running", "message": "파이프라인이 이미 실행 중입니다"}), 409
 
     opts = {}
     if request.is_json:
         opts["skip_collect"] = request.json.get("skip_collect", False)
         opts["test_mode"] = request.json.get("test_mode", False)
 
-    thread = threading.Thread(target=run_pipeline, kwargs=opts, daemon=True)
+    thread = threading.Thread(target=_run_pipeline_tracked, kwargs=opts, daemon=True)
     thread.start()
-    return jsonify({"status": "triggered", "message": "파이프라인이 백그라운드에서 시작되었습니다"})
+    return jsonify({"status": "triggered", "message": "파이프라인이 시작되었습니다. 완료까지 수분 소요됩니다."})
+
+
+@app.route("/api/batch/status")
+def api_batch_status():
+    """현재 파이프라인 실행 상태 반환."""
+    return jsonify({
+        "running": _pipeline["running"],
+        "started_at": _pipeline["started_at"],
+        "finished_at": _pipeline["finished_at"],
+        "error": _pipeline["error"],
+    })
 
 
 @app.route("/api/data/status")

@@ -24,17 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 def cmd_server(args):
-    from batch.scheduler import start_scheduler
     from webapp.app import app
     import config
 
-    scheduler = start_scheduler()
-    logger.info("Batch scheduler active")
+    import db as _db
+    _db.init_db()
 
-    try:
-        app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
-    finally:
-        scheduler.shutdown(wait=False)
+    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
 
 
 def cmd_pipeline(args):
@@ -59,7 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description="Quant Service - KOSPI/KOSDAQ analysis")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("server", help="Start web server with scheduler")
+    sub.add_parser("server", help="Start web server (manual pipeline via UI)")
 
     p_pipe = sub.add_parser("pipeline", help="Full pipeline (collect + screen)")
     p_pipe.add_argument("--test", action="store_true", help="Test mode (3 stocks only)")
