@@ -1,13 +1,15 @@
 # =========================================================
-# db.py  —  SQLite 데이터베이스 헬퍼
+# db.py  —  DuckDB 데이터베이스 헬퍼
 # ---------------------------------------------------------
-# quant.db 단일 파일로 모든 수집/스크리닝 데이터를 관리.
+# quant.duckdb 단일 파일로 모든 수집/스크리닝 데이터를 관리.
 # collected_date 컬럼으로 날짜별 버전 관리 (기존 CSV 파일명 대체).
+# SQLite → DuckDB 마이그레이션: 컬럼형 스토리지로 집계 쿼리 성능 향상.
 # =========================================================
 
 import logging
-import sqlite3
+from contextlib import contextmanager
 
+import duckdb
 import pandas as pd
 
 import config
@@ -17,80 +19,70 @@ log = logging.getLogger("DB")
 # ─────────────────────────────────────────────
 # 테이블 스키마
 # ─────────────────────────────────────────────
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS master (
+_SCHEMA_STATEMENTS = [
+    """CREATE TABLE IF NOT EXISTS master (
     종목코드      TEXT NOT NULL,
     종목명        TEXT,
     시장구분      TEXT,
     종목구분      TEXT,
     collected_date TEXT NOT NULL,
     PRIMARY KEY (종목코드, collected_date)
-);
-
-CREATE TABLE IF NOT EXISTS daily (
+)""",
+    """CREATE TABLE IF NOT EXISTS daily (
     종목코드      TEXT NOT NULL,
     종목명        TEXT,
-    종가          REAL,
-    시가총액      REAL,
-    상장주식수    REAL,
-    EPS           REAL,
-    BPS           REAL,
-    주당배당금    REAL,
+    종가          DOUBLE,
+    시가총액      DOUBLE,
+    상장주식수    DOUBLE,
+    EPS           DOUBLE,
+    BPS           DOUBLE,
+    주당배당금    DOUBLE,
     기준일        TEXT,
     collected_date TEXT NOT NULL,
     PRIMARY KEY (종목코드, collected_date)
-);
-
-CREATE TABLE IF NOT EXISTS financial_statements (
+)""",
+    """CREATE TABLE IF NOT EXISTS financial_statements (
     종목코드      TEXT NOT NULL,
     기준일        TEXT,
     계정          TEXT,
     주기          TEXT,
-    값            REAL,
+    값            DOUBLE,
     추정치        INTEGER,
     collected_date TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS indicators (
+)""",
+    """CREATE TABLE IF NOT EXISTS indicators (
     종목코드      TEXT NOT NULL,
     기준일        TEXT,
     지표구분      TEXT,
     계정          TEXT,
-    값            REAL,
+    값            DOUBLE,
     collected_date TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS shares (
+)""",
+    """CREATE TABLE IF NOT EXISTS shares (
     종목코드      TEXT NOT NULL,
     기준일        TEXT,
-    발행주식수    INTEGER,
-    자사주        INTEGER,
-    유통주식수    INTEGER,
+    발행주식수    BIGINT,
+    자사주        BIGINT,
+    유통주식수    BIGINT,
     collected_date TEXT NOT NULL,
     PRIMARY KEY (종목코드, collected_date)
-);
-
-CREATE TABLE IF NOT EXISTS price_history (
+)""",
+    """CREATE TABLE IF NOT EXISTS price_history (
     종목코드      TEXT NOT NULL,
     날짜          TEXT NOT NULL,
-    시가          REAL,
-    고가          REAL,
-    저가          REAL,
-    종가          REAL,
-    거래량        REAL,
-    거래대금      REAL,
+    시가          DOUBLE,
+    고가          DOUBLE,
+    저가          DOUBLE,
+    종가          DOUBLE,
+    거래량        DOUBLE,
+    거래대금      DOUBLE,
     collected_date TEXT NOT NULL,
     PRIMARY KEY (종목코드, 날짜, collected_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_fs_code_date
-    ON financial_statements (종목코드, collected_date);
-CREATE INDEX IF NOT EXISTS idx_ind_code_date
-    ON indicators (종목코드, collected_date);
-CREATE INDEX IF NOT EXISTS idx_ph_code_date
-    ON price_history (종목코드, collected_date);
-
-CREATE TABLE IF NOT EXISTS analysis_reports (
+)""",
+    "CREATE INDEX IF NOT EXISTS idx_fs_code_date ON financial_statements (종목코드, collected_date)",
+    "CREATE INDEX IF NOT EXISTS idx_ind_code_date ON indicators (종목코드, collected_date)",
+    "CREATE INDEX IF NOT EXISTS idx_ph_code_date ON price_history (종목코드, collected_date)",
+    """CREATE TABLE IF NOT EXISTS analysis_reports (
     종목코드      TEXT NOT NULL,
     종목명        TEXT,
     report_html   TEXT,
@@ -98,39 +90,38 @@ CREATE TABLE IF NOT EXISTS analysis_reports (
     model_used    TEXT,
     generated_date TEXT NOT NULL,
     PRIMARY KEY (종목코드)
-);
-
-CREATE TABLE IF NOT EXISTS dashboard_result (
+)""",
+    """CREATE TABLE IF NOT EXISTS dashboard_result (
     종목코드      TEXT PRIMARY KEY,
     종목명        TEXT,
-    종가          REAL,
-    시가총액      REAL,
-    상장주식수    REAL,
-    TTM_매출      REAL,
-    TTM_순이익    REAL,
-    TTM_영업CF    REAL,
-    TTM_CAPEX     REAL,
-    TTM_FCF       REAL,
-    자본          REAL,
-    부채          REAL,
-    PER           REAL,
-    PBR           REAL,
-    ROE(%)        REAL,
-    부채비율(%)   REAL,
-    영업이익률(%) REAL,
-    배당수익률(%) REAL,
-    EPS           REAL,
-    BPS           REAL,
-    DPS_최근      REAL,
-    PSR           REAL,
-    PEG           REAL,
-    이익수익률(%) REAL,
-    FCF수익률(%)  REAL,
-    현금전환율(%) REAL,
-    CAPEX비율(%)  REAL,
+    종가          DOUBLE,
+    시가총액      DOUBLE,
+    상장주식수    DOUBLE,
+    TTM_매출      DOUBLE,
+    TTM_순이익    DOUBLE,
+    TTM_영업CF    DOUBLE,
+    TTM_CAPEX     DOUBLE,
+    TTM_FCF       DOUBLE,
+    자본          DOUBLE,
+    부채          DOUBLE,
+    PER           DOUBLE,
+    PBR           DOUBLE,
+    "ROE(%)"      DOUBLE,
+    "부채비율(%)" DOUBLE,
+    "영업이익률(%)" DOUBLE,
+    "배당수익률(%)" DOUBLE,
+    EPS           DOUBLE,
+    BPS           DOUBLE,
+    DPS_최근      DOUBLE,
+    PSR           DOUBLE,
+    PEG           DOUBLE,
+    "이익수익률(%)" DOUBLE,
+    "FCF수익률(%)" DOUBLE,
+    "현금전환율(%)" DOUBLE,
+    "CAPEX비율(%)" DOUBLE,
     이익품질_양호 INTEGER,
-    부채상환능력  REAL,
-    F스코어       REAL,
+    부채상환능력  DOUBLE,
+    F스코어       DOUBLE,
     F1_수익성     INTEGER,
     F2_영업CF     INTEGER,
     F3_ROA개선    INTEGER,
@@ -138,52 +129,60 @@ CREATE TABLE IF NOT EXISTS dashboard_result (
     F5_레버리지   INTEGER,
     F6_유동성     INTEGER,
     F7_희석없음   INTEGER,
-    F8_매출총이익률 INTEGER,
+    "F8_매출총이익률" INTEGER,
     F9_자산회전율 INTEGER,
-    적정주가_SRIM REAL,
-    괴리율(%)     REAL,
-    S_PER         REAL,
-    S_PBR         REAL,
-    S_ROE         REAL,
-    S_매출CAGR    REAL,
-    S_영업이익CAGR REAL,
-    S_순이익CAGR  REAL,
-    S_연속성장    REAL,
-    S_이익률개선  REAL,
-    S_배당수익률  REAL,
-    S_배당연속증가 REAL,
-    S_괴리율      REAL,
-    S_F스코어     REAL,
-    S_FCF수익률   REAL,
-    종합점수      REAL,
-    매출_CAGR     REAL,
-    영업이익_CAGR REAL,
-    순이익_CAGR   REAL,
-    매출_연속성장 REAL,
-    영업이익_연속성장 REAL,
-    순이익_연속성장 REAL,
-    이익률_변동폭 REAL,
-    배당_연속증가 REAL,
+    적정주가_SRIM DOUBLE,
+    "괴리율(%)"   DOUBLE,
+    S_PER         DOUBLE,
+    S_PBR         DOUBLE,
+    S_ROE         DOUBLE,
+    S_매출CAGR    DOUBLE,
+    S_영업이익CAGR DOUBLE,
+    S_순이익CAGR  DOUBLE,
+    S_연속성장    DOUBLE,
+    S_이익률개선  DOUBLE,
+    S_배당수익률  DOUBLE,
+    S_배당연속증가 DOUBLE,
+    S_괴리율      DOUBLE,
+    S_F스코어     DOUBLE,
+    S_FCF수익률   DOUBLE,
+    종합점수      DOUBLE,
+    매출_CAGR     DOUBLE,
+    영업이익_CAGR DOUBLE,
+    순이익_CAGR   DOUBLE,
+    매출_연속성장 DOUBLE,
+    영업이익_연속성장 DOUBLE,
+    순이익_연속성장 DOUBLE,
+    이익률_변동폭 DOUBLE,
+    배당_연속증가 DOUBLE,
     시장구분      TEXT,
     종목구분      TEXT
-);
-"""
+)""",
+]
 
 
 # ─────────────────────────────────────────────
 # 연결
 # ─────────────────────────────────────────────
 
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(config.DB_PATH), timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+@contextmanager
+def get_conn():
+    """DuckDB 연결 컨텍스트 매니저 — with get_conn() as conn: 패턴으로 사용"""
+    conn = duckdb.connect(str(config.DB_PATH))
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
     with get_conn() as conn:
-        conn.executescript(_SCHEMA)
+        for stmt in _SCHEMA_STATEMENTS:
+            conn.execute(stmt)
     log.info("DB 초기화 완료: %s", config.DB_PATH)
 
 
@@ -194,10 +193,17 @@ def init_db():
 def table_has_data(table: str, collected_date: str) -> bool:
     with get_conn() as conn:
         cur = conn.execute(
-            f"SELECT COUNT(*) FROM [{table}] WHERE collected_date = ?",
-            (collected_date,),
+            f"SELECT COUNT(*) FROM {table} WHERE collected_date = ?",
+            [collected_date],
         )
         return cur.fetchone()[0] > 0
+
+
+def _insert_df(conn, df: pd.DataFrame, table: str):
+    """DataFrame을 DuckDB 테이블에 삽입"""
+    conn.register("_insert_tmp", df)
+    conn.execute(f"INSERT INTO {table} SELECT * FROM _insert_tmp")
+    conn.unregister("_insert_tmp")
 
 
 def save_df(df: pd.DataFrame, table: str, collected_date: str):
@@ -206,17 +212,17 @@ def save_df(df: pd.DataFrame, table: str, collected_date: str):
     data = df.copy()
     data["collected_date"] = collected_date
 
-    # Timestamp → "YYYY-MM-DD" 문자열 변환 (SQLite 호환)
+    # Timestamp → "YYYY-MM-DD" 문자열 변환
     for col in data.columns:
         if pd.api.types.is_datetime64_any_dtype(data[col]):
             data[col] = data[col].dt.strftime("%Y-%m-%d")
 
     with get_conn() as conn:
         conn.execute(
-            f"DELETE FROM [{table}] WHERE collected_date = ?",
-            (collected_date,),
+            f"DELETE FROM {table} WHERE collected_date = ?",
+            [collected_date],
         )
-        data.to_sql(table, conn, if_exists="append", index=False)
+        _insert_df(conn, data, table)
 
     log.info("저장: %s (%d건, date=%s)", table, len(data), collected_date)
 
@@ -226,7 +232,9 @@ def save_dashboard(df: pd.DataFrame):
         return
     with get_conn() as conn:
         conn.execute("DROP TABLE IF EXISTS dashboard_result")
-        df.to_sql("dashboard_result", conn, index=False)
+        conn.register("_dash_tmp", df)
+        conn.execute("CREATE TABLE dashboard_result AS SELECT * FROM _dash_tmp")
+        conn.unregister("_dash_tmp")
     log.info("저장: dashboard_result (%d건)", len(df))
 
 
@@ -237,10 +245,8 @@ def save_dashboard(df: pd.DataFrame):
 def load_latest(table: str) -> pd.DataFrame:
     with get_conn() as conn:
         try:
-            cur = conn.execute(
-                f"SELECT MAX(collected_date) FROM [{table}]"
-            )
-        except sqlite3.OperationalError:
+            cur = conn.execute(f"SELECT MAX(collected_date) FROM {table}")
+        except Exception:
             return pd.DataFrame()
 
         row = cur.fetchone()
@@ -248,11 +254,10 @@ def load_latest(table: str) -> pd.DataFrame:
             return pd.DataFrame()
 
         latest = row[0]
-        df = pd.read_sql(
-            f"SELECT * FROM [{table}] WHERE collected_date = ?",
-            conn,
-            params=(latest,),
-        )
+        df = conn.execute(
+            f"SELECT * FROM {table} WHERE collected_date = ?",
+            [latest],
+        ).df()
 
     if "collected_date" in df.columns:
         df = df.drop(columns=["collected_date"])
@@ -264,8 +269,8 @@ def load_latest(table: str) -> pd.DataFrame:
 def load_dashboard() -> pd.DataFrame:
     with get_conn() as conn:
         try:
-            df = pd.read_sql("SELECT * FROM dashboard_result", conn)
-        except (sqlite3.OperationalError, pd.io.sql.DatabaseError):
+            df = conn.execute("SELECT * FROM dashboard_result").df()
+        except Exception:
             return pd.DataFrame()
     return df
 
@@ -281,7 +286,7 @@ def save_report(code: str, name: str, html: str, scores_json: str,
             """INSERT OR REPLACE INTO analysis_reports
                (종목코드, 종목명, report_html, scores_json, model_used, generated_date)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (code, name, html, scores_json, model, date),
+            [code, name, html, scores_json, model, date],
         )
     log.info("보고서 저장: %s %s", code, name)
 
@@ -290,7 +295,7 @@ def load_report(code: str) -> dict | None:
     with get_conn() as conn:
         cur = conn.execute(
             "SELECT * FROM analysis_reports WHERE 종목코드 = ?",
-            (code.zfill(6),),
+            [code.zfill(6)],
         )
         row = cur.fetchone()
         if row is None:
@@ -308,7 +313,7 @@ def list_reports() -> list[dict]:
             )
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
-        except sqlite3.OperationalError:
+        except Exception:
             return []
 
 
@@ -316,7 +321,7 @@ def delete_report(code: str):
     with get_conn() as conn:
         conn.execute(
             "DELETE FROM analysis_reports WHERE 종목코드 = ?",
-            (code.zfill(6),),
+            [code.zfill(6)],
         )
 
 
@@ -328,11 +333,9 @@ def get_data_status() -> dict:
     with get_conn() as conn:
         for t in tables:
             try:
-                cur = conn.execute(
-                    f"SELECT COUNT(*) FROM [{t}]"
-                )
+                cur = conn.execute(f"SELECT COUNT(*) FROM {t}")
                 total = cur.fetchone()[0]
-            except sqlite3.OperationalError:
+            except Exception:
                 continue
 
             if total == 0:
@@ -341,9 +344,7 @@ def get_data_status() -> dict:
             if t == "dashboard_result":
                 status[t] = {"rows": total, "collected_date": "-"}
             else:
-                cur2 = conn.execute(
-                    f"SELECT MAX(collected_date) FROM [{t}]"
-                )
+                cur2 = conn.execute(f"SELECT MAX(collected_date) FROM {t}")
                 latest = cur2.fetchone()[0]
                 status[t] = {"rows": total, "collected_date": latest}
 
