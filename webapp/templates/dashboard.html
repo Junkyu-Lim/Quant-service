@@ -126,6 +126,39 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body" id="detail-body"></div>
+        <div class="modal-footer">
+          <button type="button" id="btn-analysis" class="btn btn-outline-primary btn-sm" data-code="">
+            AI 정성 분석
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis Report modal -->
+  <div class="modal fade" id="report-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="report-title">AI 정성 분석 보고서</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="report-body">
+          <div class="text-center py-5" id="report-loading" style="display:none;">
+            <div class="spinner-border text-primary mb-3" role="status"></div>
+            <div class="text-muted">Claude가 분석 보고서를 생성하고 있습니다...</div>
+            <div class="text-muted small mt-1">약 15-30초 소요됩니다</div>
+          </div>
+          <div id="report-content"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-regenerate" class="btn btn-outline-warning btn-sm" data-code="" style="display:none;">
+            보고서 재생성
+          </button>
+          <span id="report-meta" class="text-muted small me-auto"></span>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        </div>
       </div>
     </div>
   </div>

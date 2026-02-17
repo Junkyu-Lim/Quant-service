@@ -89,6 +89,16 @@ CREATE INDEX IF NOT EXISTS idx_ind_code_date
     ON indicators (종목코드, collected_date);
 CREATE INDEX IF NOT EXISTS idx_ph_code_date
     ON price_history (종목코드, collected_date);
+
+CREATE TABLE IF NOT EXISTS analysis_reports (
+    종목코드      TEXT NOT NULL,
+    종목명        TEXT,
+    report_html   TEXT,
+    scores_json   TEXT,
+    model_used    TEXT,
+    generated_date TEXT NOT NULL,
+    PRIMARY KEY (종목코드)
+);
 """
 
 
@@ -195,6 +205,52 @@ def load_dashboard() -> pd.DataFrame:
 # ─────────────────────────────────────────────
 # 상태 조회 (webapp용)
 # ─────────────────────────────────────────────
+
+def save_report(code: str, name: str, html: str, scores_json: str,
+                 model: str, date: str):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO analysis_reports
+               (종목코드, 종목명, report_html, scores_json, model_used, generated_date)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (code, name, html, scores_json, model, date),
+        )
+    log.info("보고서 저장: %s %s", code, name)
+
+
+def load_report(code: str) -> dict | None:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM analysis_reports WHERE 종목코드 = ?",
+            (code.zfill(6),),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+
+
+def list_reports() -> list[dict]:
+    with get_conn() as conn:
+        try:
+            cur = conn.execute(
+                "SELECT 종목코드, 종목명, model_used, generated_date "
+                "FROM analysis_reports ORDER BY generated_date DESC"
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        except sqlite3.OperationalError:
+            return []
+
+
+def delete_report(code: str):
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM analysis_reports WHERE 종목코드 = ?",
+            (code.zfill(6),),
+        )
+
 
 def get_data_status() -> dict:
     tables = ["master", "daily", "financial_statements",
