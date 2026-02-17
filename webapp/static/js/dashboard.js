@@ -14,6 +14,45 @@
   let advFilterOpen = false;
   const columnFilters = {}; // { column: { min, max } }
 
+  // ── Watchlist (localStorage) ──
+  const WATCHLIST_KEY = "quant_watchlist";
+
+  function getWatchlist() {
+    try { return new Set(JSON.parse(localStorage.getItem(WATCHLIST_KEY) || "[]")); }
+    catch { return new Set(); }
+  }
+  function saveWatchlist(set) {
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify([...set]));
+  }
+  function updateWatchlistCount() {
+    const el = document.getElementById("cnt-watchlist");
+    if (el) el.textContent = getWatchlist().size;
+  }
+  function updateAllStarButtons() {
+    const wl = getWatchlist();
+    document.querySelectorAll(".watch-btn").forEach(btn => {
+      const watched = wl.has(btn.dataset.code);
+      btn.textContent = watched ? "★" : "☆";
+      btn.classList.toggle("watched", watched);
+    });
+    // 모달 내 관심 버튼도 업데이트
+    const btnWD = document.getElementById("btn-watch-detail");
+    if (btnWD && btnWD.dataset.code) {
+      const watched = wl.has(btnWD.dataset.code);
+      btnWD.textContent = watched ? "★ 관심 해제" : "☆ 관심 종목";
+      btnWD.classList.toggle("btn-warning", watched);
+      btnWD.classList.toggle("btn-outline-warning", !watched);
+    }
+  }
+  function toggleWatch(code) {
+    const wl = getWatchlist();
+    if (wl.has(code)) wl.delete(code); else wl.add(code);
+    saveWatchlist(wl);
+    updateAllStarButtons();
+    updateWatchlistCount();
+    if (currentScreen === "watchlist") loadStocks();
+  }
+
   const tbody = document.getElementById("stock-tbody");
   const headerRow = document.getElementById("table-header");
   const pageInfo = document.getElementById("page-info");
@@ -118,6 +157,11 @@
       title: "💰 배당 성장 (수익+배당 동반증가) 전략",
       criteria: "순이익 연속성장 ≥ 2년 · 배당금 연속증가 ≥ 1년 · DPS CAGR > 0% · ROE ≥ 5% · 배당수익률 > 0% · 시가총액 ≥ 300억",
       formula: "점수 = DPS_CAGR×3.0 + 순이익CAGR×2.5 + 배당연속증가×2.0 + 순이익연속성장×2.0 + ROE×1.5 + 배당수익률×1.5 + 저부채×1.0"
+    },
+    watchlist: {
+      title: "★ 관심 종목",
+      criteria: "별표로 저장한 관심 종목입니다. 브라우저에 저장되며 서버에 전송되지 않습니다.",
+      formula: "테이블 각 행의 ★ 버튼으로 추가/제거"
     }
   };
 
@@ -223,6 +267,21 @@
       { key: "부채비율(%)", label: "Debt%", fmt: "f1" },
       { key: "배당성장_점수", label: "Score", fmt: "f1" },
     ],
+    watchlist: [
+      { key: "종목코드", label: "Code" },
+      { key: "종목명", label: "Name" },
+      { key: "시장구분", label: "Market" },
+      { key: "종가", label: "Price", fmt: "int" },
+      { key: "PER", label: "PER", fmt: "f2" },
+      { key: "PBR", label: "PBR", fmt: "f2" },
+      { key: "ROE(%)", label: "ROE%", fmt: "f2" },
+      { key: "F스코어", label: "F-Score", fmt: "int" },
+      { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
+      { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
+      { key: "FCF수익률(%)", label: "FCF%", fmt: "f2" },
+      { key: "괴리율(%)", label: "Gap%", fmt: "f2" },
+      { key: "종합점수", label: "Score", fmt: "f1" },
+    ],
   };
 
   // ── Filterable columns ──
@@ -301,7 +360,8 @@
   // ── Build table header ──
   function buildHeader() {
     const cols = COLUMNS[currentScreen] || COLUMNS.all;
-    headerRow.innerHTML = cols.map(c => {
+    const starTh = `<th style="width:24px;text-align:center;cursor:default;" title="관심 종목">★</th>`;
+    headerRow.innerHTML = starTh + cols.map(c => {
       const tooltip = TOOLTIPS[c.key] || "";
       const isFilterable = FILTERABLE_COLUMNS.includes(c.key);
       const filterIcon = isFilterable ? `<button class="btn btn-sm btn-link p-0 ms-1 filter-icon" data-filter-col="${c.key}" style="font-size: 0.75rem; line-height: 1; color: #6c757d;" title="Filter">▼</button>` : "";
@@ -459,8 +519,22 @@
     const market = document.getElementById("f-market").value;
     const q = document.getElementById("f-search").value.trim();
 
+    // watchlist 탭: 저장된 코드 목록으로 필터링
+    let apiScreen = currentScreen;
+    let codesParam = "";
+    if (currentScreen === "watchlist") {
+      const wl = [...getWatchlist()];
+      if (wl.length === 0) {
+        renderTable([]);
+        renderPagination(0, 1, pageSize);
+        return;
+      }
+      apiScreen = "all";
+      codesParam = wl.join(",");
+    }
+
     const params = new URLSearchParams({
-      screen: currentScreen,
+      screen: apiScreen,
       page: currentPage,
       size: pageSize,
       sort: sortCol,
@@ -468,6 +542,7 @@
     });
     if (market) params.set("market", market);
     if (q) params.set("q", q);
+    if (codesParam) params.set("codes", codesParam);
 
     // Add column filters
     Object.keys(columnFilters).forEach(col => {
@@ -494,11 +569,17 @@
   function renderTable(items) {
     const cols = COLUMNS[currentScreen] || COLUMNS.all;
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="${cols.length}" class="text-center text-muted">
-        No data. Run the pipeline first.</td></tr>`;
+      const msg = currentScreen === "watchlist"
+        ? "관심 종목이 없습니다. 테이블에서 ★ 버튼으로 추가하세요."
+        : "No data. Run the pipeline first.";
+      tbody.innerHTML = `<tr><td colspan="${cols.length + 1}" class="text-center text-muted py-4">${msg}</td></tr>`;
       return;
     }
+    const wl = getWatchlist();
     tbody.innerHTML = items.map(s => {
+      const code = s["종목코드"];
+      const watched = wl.has(code);
+      const starCell = `<td style="text-align:center;padding:2px 4px;"><button class="watch-btn${watched ? " watched" : ""}" data-code="${code}">${watched ? "★" : "☆"}</button></td>`;
       const cells = cols.map(c => {
         const v = s[c.key];
         let cls = "";
@@ -508,8 +589,16 @@
         }
         return `<td class="${cls}">${fmt(v, c.fmt)}</td>`;
       }).join("");
-      return `<tr data-code="${s["종목코드"]}">${cells}</tr>`;
+      return `<tr data-code="${code}">${starCell}${cells}</tr>`;
     }).join("");
+
+    // 별표 버튼 이벤트
+    tbody.querySelectorAll(".watch-btn").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        toggleWatch(btn.dataset.code);
+      });
+    });
   }
 
   function renderPagination(total, page, size) {
@@ -663,6 +752,60 @@
     "Score": "종합점수: 밸류에이션 + 성장성 + F-Score + FCF수익률 등 종합",
   };
 
+  // ── Financial chart ──
+  let financialChart = null;
+
+  async function loadFinancialChart(code) {
+    const area = document.getElementById("financial-chart-area");
+    area.style.display = "none";
+    try {
+      const res = await fetch(`/api/stocks/${code}/financials`);
+      const data = await res.json();
+      if (!data.years || !data.years.length || !data.series || !data.series.length) return;
+
+      area.style.display = "block";
+      if (financialChart) { financialChart.destroy(); financialChart = null; }
+
+      const COLORS = ["#0d6efd", "#198754", "#dc3545"];
+      const LABELS = { "매출액": "매출액", "영업이익": "영업이익", "당기순이익": "순이익" };
+
+      const ctx = document.getElementById("financial-chart").getContext("2d");
+      financialChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: data.years,
+          datasets: data.series.map((s, i) => ({
+            label: LABELS[s.name] || s.name,
+            data: s.data,
+            backgroundColor: COLORS[i % COLORS.length] + "bb",
+            borderColor: COLORS[i % COLORS.length],
+            borderWidth: 1,
+          })),
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "top", labels: { font: { size: 10 }, boxWidth: 12 } },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const v = ctx.parsed.y;
+                  if (v == null) return "-";
+                  return ` ${ctx.dataset.label}: ${Number(v).toLocaleString("ko-KR")}`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: { ticks: { font: { size: 9 }, callback: v => Number(v).toLocaleString("ko-KR") } },
+            x: { ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    } catch (e) { console.error("Chart error", e); }
+  }
+
   // ── Detail modal ──
   tbody.addEventListener("click", async e => {
     const row = e.target.closest("tr[data-code]");
@@ -704,8 +847,15 @@
         return `<div class="metric-pill" ${tooltipAttr}><span class="lbl">${lbl}</span><br><span class="val">${display}</span></div>`;
       }).join("");
 
-      document.getElementById("detail-body").innerHTML =
-        `<div class="metric-grid">${pillsHtml}</div>`;
+      document.getElementById("detail-metrics").innerHTML = pillsHtml;
+
+      // 관심 종목 버튼 상태 업데이트
+      const btnWatch = document.getElementById("btn-watch-detail");
+      btnWatch.dataset.code = code;
+      const wl = getWatchlist();
+      const isWatched = wl.has(code);
+      btnWatch.textContent = isWatched ? "★ 관심 해제" : "☆ 관심 종목";
+      btnWatch.className = `btn btn-sm ${isWatched ? "btn-warning" : "btn-outline-warning"}`;
 
       // Set up analysis button with stock code
       const btnAnalysis = document.getElementById("btn-analysis");
@@ -726,12 +876,15 @@
 
       // Initialize tooltips for modal
       setTimeout(() => {
-        document.querySelectorAll('#detail-body [data-bs-toggle="tooltip"]').forEach(el => {
+        document.querySelectorAll('#detail-metrics [data-bs-toggle="tooltip"]').forEach(el => {
           new bootstrap.Tooltip(el, { delay: { show: 200, hide: 100 } });
         });
       }, 100);
 
       new bootstrap.Modal(document.getElementById("detail-modal")).show();
+
+      // 재무 추이 차트 로드
+      loadFinancialChart(code);
     } catch (err) { console.error("Detail error", err); }
   });
 
@@ -794,6 +947,12 @@
     }
   }
 
+  // 모달 관심 종목 버튼
+  document.getElementById("btn-watch-detail").addEventListener("click", () => {
+    const code = document.getElementById("btn-watch-detail").dataset.code;
+    if (code) toggleWatch(code);
+  });
+
   // Analysis button in detail modal
   document.getElementById("btn-analysis").addEventListener("click", () => {
     const code = document.getElementById("btn-analysis").dataset.code;
@@ -809,8 +968,47 @@
   });
 
   // ── Pipeline trigger ──
-  document.getElementById("btn-trigger").addEventListener("click", async () => {
-    if (!confirm("Run the data pipeline now?")) return;
+  const btnTrigger  = document.getElementById("btn-trigger");
+  const btnSpinner  = document.getElementById("btn-trigger-spinner");
+  const btnLabel    = document.getElementById("btn-trigger-label");
+  let pipelinePoller = null;
+
+  function setPipelineRunning(running) {
+    btnTrigger.disabled = running;
+    btnSpinner.classList.toggle("d-none", !running);
+    btnLabel.textContent = running ? "Running…" : "Run Pipeline";
+  }
+
+  async function pollPipelineStatus() {
+    try {
+      const res = await fetch("/api/batch/status");
+      const data = await res.json();
+      if (!data.running) {
+        clearInterval(pipelinePoller);
+        pipelinePoller = null;
+        setPipelineRunning(false);
+        if (data.error) {
+          showToast("파이프라인 오류: " + data.error);
+        } else if (data.finished_at) {
+          showToast("파이프라인 완료! 데이터를 새로고침합니다.");
+          loadSummary();
+          loadTabCounts();
+          loadStocks();
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 페이지 로드 시 이미 실행 중이면 버튼 비활성화
+  fetch("/api/batch/status").then(r => r.json()).then(data => {
+    if (data.running) {
+      setPipelineRunning(true);
+      pipelinePoller = setInterval(pollPipelineStatus, 3000);
+    }
+  }).catch(() => {});
+
+  btnTrigger.addEventListener("click", async () => {
+    if (!confirm("Run the full data pipeline now?")) return;
     try {
       const res = await fetch("/api/batch/trigger", {
         method: "POST",
@@ -818,7 +1016,13 @@
         body: JSON.stringify({}),
       });
       const data = await res.json();
+      if (res.status === 409) {
+        showToast(data.message);
+        return;
+      }
       showToast(data.message || "Pipeline triggered");
+      setPipelineRunning(true);
+      pipelinePoller = setInterval(pollPipelineStatus, 3000);
     } catch (err) { showToast("Failed to trigger pipeline"); }
   });
 
@@ -828,5 +1032,6 @@
   loadTabCounts();
   loadStocks();
   updateStrategyDescription(currentScreen);
+  updateWatchlistCount();
   initTooltips();
 })();

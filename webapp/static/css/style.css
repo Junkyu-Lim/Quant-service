@@ -121,6 +121,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   font-size: .75rem; color: #adb5bd;
 }
 
+/* Watchlist star button */
+.watch-btn {
+  background: none; border: none; padding: 0; font-size: .9rem;
+  color: #adb5bd; cursor: pointer; line-height: 1; transition: color 0.15s;
+}
+.watch-btn:hover { color: #ffc107; }
+.watch-btn.watched { color: #ffc107; }
+
 @media (max-width: 768px) {
   .report-header { flex-direction: column; gap: 12px; align-items: flex-start; }
   .risk-catalyst-grid { grid-template-columns: 1fr; }

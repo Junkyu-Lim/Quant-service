@@ -30,6 +30,9 @@ CORS(app)
 # ── In-memory data cache ──
 _cache: dict = {"df": pd.DataFrame(), "mtime": 0}
 
+# ── Pipeline state ──
+_pipeline: dict = {"running": False, "started_at": None, "finished_at": None, "error": None}
+
 # Columns exposed to the frontend
 DISPLAY_COLS = [
     "종목코드", "종목명", "시장구분", "종가", "시가총액",
@@ -149,6 +152,13 @@ def api_stocks():
     elif screen == "dividend_growth":
         filtered = _apply_screen_filter(filtered, "dividend_growth")
 
+    # ── Codes filter (watchlist 지원) ──
+    codes_param = request.args.get("codes", "")
+    if codes_param:
+        codes = [c.strip().zfill(6) for c in codes_param.split(",") if c.strip()]
+        if codes:
+            filtered = filtered[filtered["종목코드"].isin(codes)]
+
     # ── Market filter ──
     if market and "시장구분" in filtered.columns:
         filtered = filtered[filtered["시장구분"] == market.upper()]
@@ -230,19 +240,74 @@ def api_market_summary():
     return jsonify(results)
 
 
+def _run_pipeline_tracked(**opts):
+    """run_pipeline을 감싸 _pipeline 상태를 업데이트한다."""
+    from pipeline import run_pipeline
+    from datetime import datetime
+    _pipeline["running"] = True
+    _pipeline["started_at"] = datetime.now().isoformat()
+    _pipeline["error"] = None
+    try:
+        run_pipeline(**opts)
+    except Exception as e:
+        _pipeline["error"] = str(e)
+        log.exception("Pipeline failed")
+    finally:
+        _pipeline["running"] = False
+        _pipeline["finished_at"] = datetime.now().isoformat()
+
+
 @app.route("/api/batch/trigger", methods=["POST"])
 def api_batch_trigger():
     """Manually trigger the pipeline in background."""
-    from pipeline import run_pipeline
+    if _pipeline["running"]:
+        return jsonify({"status": "already_running", "message": "파이프라인이 이미 실행 중입니다"}), 409
 
     opts = {}
     if request.is_json:
         opts["skip_collect"] = request.json.get("skip_collect", False)
         opts["test_mode"] = request.json.get("test_mode", False)
 
-    thread = threading.Thread(target=run_pipeline, kwargs=opts, daemon=True)
+    thread = threading.Thread(target=_run_pipeline_tracked, kwargs=opts, daemon=True)
     thread.start()
-    return jsonify({"status": "triggered", "message": "파이프라인이 백그라운드에서 시작되었습니다"})
+    return jsonify({"status": "triggered", "message": "파이프라인이 시작되었습니다. 완료까지 수분 소요됩니다."})
+
+
+@app.route("/api/batch/status")
+def api_batch_status():
+    """현재 파이프라인 실행 상태 반환."""
+    return jsonify({
+        "running": _pipeline["running"],
+        "started_at": _pipeline["started_at"],
+        "finished_at": _pipeline["finished_at"],
+        "error": _pipeline["error"],
+    })
+
+
+@app.route("/api/stocks/<code>/financials")
+def api_stock_financials(code: str):
+    """연간 재무제표 시계열 (차트용: 매출액/영업이익/당기순이익)"""
+    df = _db.load_stock_financials(code)
+    if df.empty:
+        return jsonify({"years": [], "series": []})
+
+    df["year"] = df["기준일"].astype(str).str[:4]
+    all_years = sorted(df["year"].unique())
+
+    series_data: dict = {}
+    for _, row in df.iterrows():
+        acc = row["계정"]
+        yr = row["year"]
+        if acc not in series_data:
+            series_data[acc] = {}
+        series_data[acc][yr] = _safe_val(row["값"])
+
+    series = [
+        {"name": acc, "data": [series_data[acc].get(y) for y in all_years]}
+        for acc in ["매출액", "영업이익", "당기순이익"]
+        if acc in series_data
+    ]
+    return jsonify({"years": all_years, "series": series})
 
 
 @app.route("/api/data/status")
