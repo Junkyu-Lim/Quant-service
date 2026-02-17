@@ -4,6 +4,7 @@ Reads dashboard_result from SQLite DB produced by the pipeline and serves it
 with server-side filtering, sorting, and pagination.
 """
 
+import json
 import logging
 import os
 import threading
@@ -15,6 +16,7 @@ from flask_cors import CORS
 
 import config
 import db as _db
+from analysis.claude_analyzer import generate_report
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +255,74 @@ def api_data_status():
         }
 
     return jsonify(status)
+
+
+# ─────────────────────────────────────────
+# Analysis Report API
+# ─────────────────────────────────────────
+
+@app.route("/api/stocks/<code>/report")
+def api_get_report(code: str):
+    """Get existing analysis report for a stock."""
+    report = _db.load_report(code.zfill(6))
+    if report is None:
+        return jsonify({"exists": False}), 200
+    return jsonify({
+        "exists": True,
+        "report_html": report["report_html"],
+        "scores": json.loads(report["scores_json"]) if report["scores_json"] else {},
+        "model_used": report["model_used"],
+        "generated_date": report["generated_date"],
+        "종목명": report["종목명"],
+    })
+
+
+@app.route("/api/stocks/<code>/report", methods=["POST"])
+def api_generate_report(code: str):
+    """Generate a new analysis report using Claude API."""
+    if not config.ANTHROPIC_API_KEY:
+        return jsonify({"error": "ANTHROPIC_API_KEY가 설정되지 않았습니다."}), 500
+
+    df = _load_data()
+    if df.empty:
+        return jsonify({"error": "데이터 없음"}), 404
+
+    row = df[df["종목코드"] == code.zfill(6)]
+    if row.empty:
+        return jsonify({"error": "종목을 찾을 수 없습니다."}), 404
+
+    stock_data = {c: _safe_val(row.iloc[0].get(c)) for c in df.columns}
+
+    try:
+        result = generate_report(stock_data)
+
+        _db.init_db()
+        _db.save_report(
+            code=code.zfill(6),
+            name=stock_data.get("종목명", ""),
+            html=result["report_html"],
+            scores_json=json.dumps(result["scores"], ensure_ascii=False),
+            model=result["model"],
+            date=result["generated_date"],
+        )
+
+        return jsonify({
+            "exists": True,
+            "report_html": result["report_html"],
+            "scores": result["scores"],
+            "model_used": result["model"],
+            "generated_date": result["generated_date"],
+            "종목명": stock_data.get("종목명", ""),
+        })
+    except Exception as e:
+        log.exception("Report generation failed for %s", code)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/reports")
+def api_list_reports():
+    """List all generated reports."""
+    return jsonify(_db.list_reports())
 
 
 # ─────────────────────────────────────────

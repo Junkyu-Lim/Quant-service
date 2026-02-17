@@ -16,3 +16,9 @@ BATCH_MINUTE = int(os.environ.get("BATCH_MINUTE", "0"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "5000"))
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+
+# Claude API (for qualitative analysis reports)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANALYSIS_MODEL = os.environ.get("ANALYSIS_MODEL", "claude-sonnet-4-5-20250929")
+REPORT_DIR = DATA_DIR / "reports"
+REPORT_DIR.mkdir(exist_ok=True)

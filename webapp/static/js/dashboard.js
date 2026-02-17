@@ -694,6 +694,23 @@
       document.getElementById("detail-body").innerHTML =
         `<div class="metric-grid">${pillsHtml}</div>`;
 
+      // Set up analysis button with stock code
+      const btnAnalysis = document.getElementById("btn-analysis");
+      btnAnalysis.dataset.code = code;
+
+      // Check if report exists and update button label
+      try {
+        const rptRes = await fetch(`/api/stocks/${code}/report`);
+        const rptData = await rptRes.json();
+        if (rptData.exists) {
+          btnAnalysis.innerHTML = 'AI 정성 분석 <span class="badge bg-success ms-1">보고서 있음</span>';
+        } else {
+          btnAnalysis.textContent = 'AI 정성 분석';
+        }
+      } catch (_) {
+        btnAnalysis.textContent = 'AI 정성 분석';
+      }
+
       // Initialize tooltips for modal
       setTimeout(() => {
         document.querySelectorAll('#detail-body [data-bs-toggle="tooltip"]').forEach(el => {
@@ -703,6 +720,79 @@
 
       new bootstrap.Modal(document.getElementById("detail-modal")).show();
     } catch (err) { console.error("Detail error", err); }
+  });
+
+  // ── Analysis Report ──
+  async function openReport(code, forceRegenerate = false) {
+    const reportModal = new bootstrap.Modal(document.getElementById("report-modal"));
+    const loading = document.getElementById("report-loading");
+    const content = document.getElementById("report-content");
+    const btnRegen = document.getElementById("btn-regenerate");
+    const reportMeta = document.getElementById("report-meta");
+
+    // Close detail modal, open report modal
+    const detailModal = bootstrap.Modal.getInstance(document.getElementById("detail-modal"));
+    if (detailModal) detailModal.hide();
+
+    content.innerHTML = "";
+    loading.style.display = "block";
+    btnRegen.style.display = "none";
+    reportMeta.textContent = "";
+    reportModal.show();
+
+    try {
+      // Check for existing report first (unless regenerating)
+      if (!forceRegenerate) {
+        const existRes = await fetch(`/api/stocks/${code}/report`);
+        const existData = await existRes.json();
+        if (existData.exists) {
+          loading.style.display = "none";
+          content.innerHTML = existData.report_html;
+          document.getElementById("report-title").textContent =
+            `AI 정성 분석 - ${existData["종목명"] || code}`;
+          btnRegen.dataset.code = code;
+          btnRegen.style.display = "inline-block";
+          reportMeta.textContent = `${existData.model_used} | ${existData.generated_date}`;
+          return;
+        }
+      }
+
+      // Generate new report
+      const res = await fetch(`/api/stocks/${code}/report`, { method: "POST" });
+      const data = await res.json();
+
+      loading.style.display = "none";
+
+      if (data.error) {
+        content.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+        return;
+      }
+
+      content.innerHTML = data.report_html;
+      document.getElementById("report-title").textContent =
+        `AI 정성 분석 - ${data["종목명"] || code}`;
+      btnRegen.dataset.code = code;
+      btnRegen.style.display = "inline-block";
+      reportMeta.textContent = `${data.model_used} | ${data.generated_date}`;
+    } catch (err) {
+      loading.style.display = "none";
+      content.innerHTML = `<div class="alert alert-danger">보고서 생성 실패: ${err.message}</div>`;
+      console.error("Report error", err);
+    }
+  }
+
+  // Analysis button in detail modal
+  document.getElementById("btn-analysis").addEventListener("click", () => {
+    const code = document.getElementById("btn-analysis").dataset.code;
+    if (code) openReport(code);
+  });
+
+  // Regenerate button
+  document.getElementById("btn-regenerate").addEventListener("click", () => {
+    const code = document.getElementById("btn-regenerate").dataset.code;
+    if (code && confirm("보고서를 재생성하시겠습니까? (Claude API 호출)")) {
+      openReport(code, true);
+    }
   });
 
   // ── Pipeline trigger ──
