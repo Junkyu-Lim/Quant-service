@@ -325,6 +325,32 @@ def delete_report(code: str):
         )
 
 
+def load_stock_financials(code: str) -> pd.DataFrame:
+    """특정 종목의 연간 재무제표 시계열 (매출액/영업이익/당기순이익, 실적치만)"""
+    with get_conn() as conn:
+        try:
+            row = conn.execute(
+                "SELECT MAX(collected_date) FROM financial_statements"
+            ).fetchone()
+            if not row or not row[0]:
+                return pd.DataFrame()
+            latest = row[0]
+            df = conn.execute(
+                """SELECT 기준일, 계정, 값
+                   FROM financial_statements
+                   WHERE 종목코드 = ?
+                   AND collected_date = ?
+                   AND 주기 = 'A'
+                   AND 계정 IN ('매출액', '영업이익', '당기순이익')
+                   AND 추정치 = 0
+                   ORDER BY 기준일""",
+                [code.zfill(6), latest],
+            ).df()
+        except Exception:
+            return pd.DataFrame()
+    return df
+
+
 def get_data_status() -> dict:
     tables = ["master", "daily", "financial_statements",
               "indicators", "shares", "price_history", "dashboard_result"]

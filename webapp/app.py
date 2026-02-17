@@ -152,6 +152,13 @@ def api_stocks():
     elif screen == "dividend_growth":
         filtered = _apply_screen_filter(filtered, "dividend_growth")
 
+    # ── Codes filter (watchlist 지원) ──
+    codes_param = request.args.get("codes", "")
+    if codes_param:
+        codes = [c.strip().zfill(6) for c in codes_param.split(",") if c.strip()]
+        if codes:
+            filtered = filtered[filtered["종목코드"].isin(codes)]
+
     # ── Market filter ──
     if market and "시장구분" in filtered.columns:
         filtered = filtered[filtered["시장구분"] == market.upper()]
@@ -275,6 +282,32 @@ def api_batch_status():
         "finished_at": _pipeline["finished_at"],
         "error": _pipeline["error"],
     })
+
+
+@app.route("/api/stocks/<code>/financials")
+def api_stock_financials(code: str):
+    """연간 재무제표 시계열 (차트용: 매출액/영업이익/당기순이익)"""
+    df = _db.load_stock_financials(code)
+    if df.empty:
+        return jsonify({"years": [], "series": []})
+
+    df["year"] = df["기준일"].astype(str).str[:4]
+    all_years = sorted(df["year"].unique())
+
+    series_data: dict = {}
+    for _, row in df.iterrows():
+        acc = row["계정"]
+        yr = row["year"]
+        if acc not in series_data:
+            series_data[acc] = {}
+        series_data[acc][yr] = _safe_val(row["값"])
+
+    series = [
+        {"name": acc, "data": [series_data[acc].get(y) for y in all_years]}
+        for acc in ["매출액", "영업이익", "당기순이익"]
+        if acc in series_data
+    ]
+    return jsonify({"years": all_years, "series": series})
 
 
 @app.route("/api/data/status")
