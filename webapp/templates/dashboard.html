@@ -79,6 +79,16 @@
     </li>
   </ul>
 
+  <!-- Compare bar (watchlist only) -->
+  <div id="compare-bar" class="compare-bar" style="display:none;">
+    <div class="d-flex align-items-center gap-2">
+      <button id="btn-compare-mode" class="btn btn-outline-info btn-sm">비교하기</button>
+      <span id="compare-count" class="text-muted small" style="display:none;">0개 선택</span>
+      <button id="btn-compare-start" class="btn btn-info btn-sm" style="display:none;" disabled>비교 시작</button>
+      <button id="btn-compare-cancel" class="btn btn-outline-secondary btn-sm" style="display:none;">취소</button>
+    </div>
+  </div>
+
   <!-- Strategy description -->
   <div id="strategy-desc" class="alert alert-light mb-3 py-2 px-3 border-start-0 border-end-0 border-bottom rounded-0" style="font-size: 0.9rem; line-height: 1.6;">
   </div>
@@ -191,6 +201,62 @@
           <button type="button" id="btn-analysis" class="btn btn-outline-primary btn-sm" data-code="">
             AI 정성 분석
           </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compare modal -->
+  <div class="modal fade" id="compare-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="compare-title">종목 비교</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="compare-body">
+          <!-- Category tabs -->
+          <ul class="nav nav-pills nav-fill mb-3" id="compare-category-tabs">
+            <li class="nav-item"><a class="nav-link active" href="#" data-cat="valuation">밸류에이션</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-cat="growth">성장성</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-cat="profitability">수익성</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-cat="health">재무건전성</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-cat="technical">기술적</a></li>
+          </ul>
+
+          <!-- Compare table -->
+          <div class="table-responsive mb-4">
+            <table class="table table-bordered table-sm compare-table" id="compare-table">
+              <thead id="compare-thead"></thead>
+              <tbody id="compare-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Radar chart -->
+          <div class="mb-4">
+            <h6 class="text-muted small fw-semibold mb-2">종합 비교 (레이더 차트)</h6>
+            <div style="max-width:500px; margin:0 auto; position:relative;">
+              <canvas id="compare-radar-chart"></canvas>
+            </div>
+          </div>
+
+          <!-- Financial trend chart -->
+          <div class="mb-3">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <h6 class="text-muted small fw-semibold mb-0">재무 추이 비교</h6>
+              <div class="btn-group btn-group-sm" id="compare-fin-toggle">
+                <button class="btn btn-outline-primary btn-sm active" data-acc="매출액">매출액</button>
+                <button class="btn btn-outline-primary btn-sm" data-acc="영업이익">영업이익</button>
+                <button class="btn btn-outline-primary btn-sm" data-acc="당기순이익">순이익</button>
+              </div>
+            </div>
+            <div style="height:250px; position:relative;">
+              <canvas id="compare-fin-chart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
         </div>
       </div>
