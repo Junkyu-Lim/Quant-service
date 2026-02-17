@@ -14,6 +14,7 @@ from quant_screener import (
     detect_unit_multiplier,
     analyze_all,
     calc_valuation,
+    calc_technical_indicators,
     apply_screen,
     apply_momentum_screen,
     apply_garp_screen,
@@ -57,6 +58,7 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
     fs = load_table("financial_statements")
     ind = load_table("indicators")
     shares = load_table("shares")
+    price_hist = load_table("price_history")
 
     if daily.empty:
         log.error("daily data not found in DB – cannot run screener")
@@ -66,6 +68,9 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
     multiplier = detect_unit_multiplier(ind)
     anal_df = analyze_all(fs, ind)
     full_df = calc_valuation(daily, anal_df, multiplier, shares)
+
+    # 기술적 지표 (주가 히스토리 기반)
+    full_df = calc_technical_indicators(full_df, price_hist)
 
     # Merge market/sector info from master
     if not master.empty and "시장구분" in master.columns:

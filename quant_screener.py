@@ -657,6 +657,119 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
 
 
 # ═════════════════════════════════════════════
+# [v7] 기술적 지표 (주가 히스토리 기반)
+# ═════════════════════════════════════════════
+
+def calc_technical_indicators(df: pd.DataFrame, price_hist: pd.DataFrame) -> pd.DataFrame:
+    """주가 히스토리로 기술적 지표를 계산하여 df에 병합.
+
+    계산 지표:
+      - 52주_최고대비(%): (종가 - 52주고가) / 52주고가 × 100 (음수 = 고점 대비 하락)
+      - 52주_최저대비(%): (종가 - 52주저가) / 52주저가 × 100 (양수 = 저점 대비 상승)
+      - MA20_이격도(%): (종가 / 20일이동평균 - 1) × 100
+      - MA60_이격도(%): (종가 / 60일이동평균 - 1) × 100
+      - RSI_14: 14일 RSI (50 이상 = 상승 모멘텀)
+      - 거래대금_20일평균: 최근 20일 평균 거래대금
+      - 거래대금_증감(%): (최근 5일 평균 / 20일 평균 - 1) × 100
+      - 변동성_60일(%): 60일 수익률 표준편차 × √252 (연환산)
+    """
+    if price_hist.empty:
+        log.warning("주가 히스토리 없음 — 기술적 지표 건너뜀")
+        for col in ["52주_최고대비(%)", "52주_최저대비(%)", "MA20_이격도(%)", "MA60_이격도(%)",
+                     "RSI_14", "거래대금_20일평균", "거래대금_증감(%)", "변동성_60일(%)"]:
+            df[col] = np.nan
+        return df
+
+    tech_results = []
+    for code in df["종목코드"].unique():
+        ph = price_hist[price_hist["종목코드"] == code].copy()
+        if ph.empty or len(ph) < 5:
+            tech_results.append({"종목코드": code})
+            continue
+
+        ph = ph.sort_values("날짜")
+        closes = ph["종가"].dropna()
+
+        if len(closes) < 5:
+            tech_results.append({"종목코드": code})
+            continue
+
+        latest_close = closes.iloc[-1]
+        result = {"종목코드": code}
+
+        # 52주 최고/최저 대비
+        high_52w = ph["고가"].max() if "고가" in ph.columns else closes.max()
+        low_52w = ph["저가"].min() if "저가" in ph.columns else closes.min()
+        if pd.notna(high_52w) and high_52w > 0:
+            result["52주_최고대비(%)"] = (latest_close - high_52w) / high_52w * 100
+        if pd.notna(low_52w) and low_52w > 0:
+            result["52주_최저대비(%)"] = (latest_close - low_52w) / low_52w * 100
+
+        # 이동평균 이격도
+        if len(closes) >= 20:
+            ma20 = closes.iloc[-20:].mean()
+            if ma20 > 0:
+                result["MA20_이격도(%)"] = (latest_close / ma20 - 1) * 100
+        if len(closes) >= 60:
+            ma60 = closes.iloc[-60:].mean()
+            if ma60 > 0:
+                result["MA60_이격도(%)"] = (latest_close / ma60 - 1) * 100
+
+        # RSI 14일
+        if len(closes) >= 15:
+            delta = closes.diff()
+            gain = delta.where(delta > 0, 0.0)
+            loss = (-delta.where(delta < 0, 0.0))
+            avg_gain = gain.iloc[-14:].mean()
+            avg_loss = loss.iloc[-14:].mean()
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                result["RSI_14"] = 100 - (100 / (1 + rs))
+            elif avg_gain > 0:
+                result["RSI_14"] = 100.0
+            else:
+                result["RSI_14"] = 50.0
+
+        # 거래대금 분석
+        volumes = ph["거래량"].dropna() if "거래량" in ph.columns else pd.Series(dtype=float)
+        amounts = ph["거래대금"].dropna() if "거래대금" in ph.columns else pd.Series(dtype=float)
+
+        # 거래대금이 없으면 종가 × 거래량으로 추정
+        if amounts.empty and not volumes.empty:
+            amounts = (ph["종가"] * ph["거래량"]).dropna()
+
+        if len(amounts) >= 20:
+            avg_20d = amounts.iloc[-20:].mean()
+            result["거래대금_20일평균"] = avg_20d
+            if avg_20d > 0 and len(amounts) >= 5:
+                avg_5d = amounts.iloc[-5:].mean()
+                result["거래대금_증감(%)"] = (avg_5d / avg_20d - 1) * 100
+
+        # 변동성 (60일, 연환산)
+        if len(closes) >= 60:
+            returns = closes.pct_change().dropna()
+            if len(returns) >= 60:
+                vol_60 = returns.iloc[-60:].std() * np.sqrt(252) * 100
+                result["변동성_60일(%)"] = vol_60
+
+        tech_results.append(result)
+
+    tech_df = pd.DataFrame(tech_results)
+    if tech_df.empty:
+        return df
+
+    # 병합
+    tech_cols = [c for c in tech_df.columns if c != "종목코드"]
+    for col in tech_cols:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
+    df = df.merge(tech_df, on="종목코드", how="left")
+    log.info("기술적 지표 계산 완료 (%d종목)", len(tech_df))
+    return df
+
+
+# ═════════════════════════════════════════════
 # 스크리닝 (기존 2 + 신규 3 = 총 5개 필터)
 # ═════════════════════════════════════════════
 
@@ -694,7 +807,9 @@ def apply_momentum_screen(df):
             mom_df["영업이익_CAGR"].rank(pct=True) * 2.5 +
             mom_df["ROE(%)"].rank(pct=True) * 1.5 +
             mom_df["영업이익률_최근"].rank(pct=True) * 1.0 +
-            mom_df["이익률_개선"].rank(pct=True) * 1.0
+            mom_df["이익률_개선"].rank(pct=True) * 1.0 +
+            mom_df["RSI_14"].fillna(50).rank(pct=True) * 0.5 +
+            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 0.5
         )
     if "모멘텀_점수" in mom_df.columns:
         return mom_df.sort_values("모멘텀_점수", ascending=False)

@@ -70,10 +70,25 @@ CREATE TABLE IF NOT EXISTS shares (
     PRIMARY KEY (종목코드, collected_date)
 );
 
+CREATE TABLE IF NOT EXISTS price_history (
+    종목코드      TEXT NOT NULL,
+    날짜          TEXT NOT NULL,
+    시가          REAL,
+    고가          REAL,
+    저가          REAL,
+    종가          REAL,
+    거래량        REAL,
+    거래대금      REAL,
+    collected_date TEXT NOT NULL,
+    PRIMARY KEY (종목코드, 날짜, collected_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_fs_code_date
     ON financial_statements (종목코드, collected_date);
 CREATE INDEX IF NOT EXISTS idx_ind_code_date
     ON indicators (종목코드, collected_date);
+CREATE INDEX IF NOT EXISTS idx_ph_code_date
+    ON price_history (종목코드, collected_date);
 """
 
 
@@ -183,7 +198,7 @@ def load_dashboard() -> pd.DataFrame:
 
 def get_data_status() -> dict:
     tables = ["master", "daily", "financial_statements",
-              "indicators", "shares", "dashboard_result"]
+              "indicators", "shares", "price_history", "dashboard_result"]
     status = {}
 
     with get_conn() as conn:

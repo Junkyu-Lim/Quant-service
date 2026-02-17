@@ -231,6 +231,62 @@ def collect_daily(biz_day: str) -> pd.DataFrame:
     return df_krx
 
 
+def collect_price_history(tickers: list[str], days: int = 260) -> pd.DataFrame:
+    """FinanceDataReader로 최근 N거래일 주가/거래량 히스토리 수집.
+
+    Args:
+        tickers: 종목코드 리스트
+        days: 수집 기간 (캘린더 일 기준, 기본 260일 ≈ 52주)
+
+    Returns:
+        DataFrame with 종목코드, 날짜, 시가, 고가, 저가, 종가, 거래량, 거래대금
+    """
+    from datetime import timedelta
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    log.info(f"📈 주가 히스토리 수집 ({start_str} ~ {end_str}, {len(tickers)}개 종목)...")
+
+    all_rows = []
+
+    def _fetch_one(ticker: str) -> list[dict]:
+        rows = []
+        try:
+            df = fdr.DataReader(ticker, start_str, end_str)
+            if df is None or df.empty:
+                return rows
+            for dt, r in df.iterrows():
+                dt_str = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)[:10]
+                rows.append({
+                    "종목코드": ticker,
+                    "날짜": dt_str,
+                    "시가": safe_float(r.get("Open")),
+                    "고가": safe_float(r.get("High")),
+                    "저가": safe_float(r.get("Low")),
+                    "종가": safe_float(r.get("Close")),
+                    "거래량": safe_float(r.get("Volume")),
+                    "거래대금": safe_float(r.get("Amount") if "Amount" in r.index else None),
+                })
+        except Exception as e:
+            log.debug(f"주가 히스토리 수집 실패: {ticker} → {e}")
+        return rows
+
+    with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, 10)) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in tickers}
+        for f in tqdm(as_completed(futures), total=len(futures), desc="주가 히스토리", ncols=100):
+            try:
+                result = f.result()
+                all_rows.extend(result)
+            except Exception:
+                pass
+
+    log.info(f"  → 주가 히스토리 {len(all_rows)}건 수집 완료")
+    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+
+
 # ═════════════════════════════════════════════
 # 3. 재무제표 (FnGuide)
 # ═════════════════════════════════════════════
@@ -670,6 +726,16 @@ def run_full(test_mode: bool = False):
             _db.save_df(pd.DataFrame(share_rows), "shares", biz_day)
         else:
             log.warning("⚠️ 주식수 데이터 없음")
+
+    # ── 6) 주가 히스토리 (52주 기술적 지표용) ──
+    if _db.table_has_data("price_history", biz_day):
+        log.info("⏭️  price_history 이미 존재하여 수집 건너뜀")
+    else:
+        ph_df = collect_price_history(targets)
+        if not ph_df.empty:
+            _db.save_df(ph_df, "price_history", biz_day)
+        else:
+            log.warning("⚠️ 주가 히스토리 데이터 없음")
 
     elapsed = datetime.now() - start
     log.info(f"🎉 전체 수집 완료 (소요: {elapsed})")
