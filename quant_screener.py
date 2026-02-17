@@ -491,6 +491,13 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
     result["DPS_CAGR"] = calc_cagr(dps_series)
     result["배당_연속증가"] = count_consecutive_growth(dps_series)
 
+    # ── [v8] 배당 성장 추가 지표: 수익 + 배당 동반성장 ──
+    # 순이익과 배당금이 함께 연속 증가하는지 체크
+    result["배당_수익동반증가"] = 1 if (
+        count_consecutive_growth(ni_series) >= 2 and
+        count_consecutive_growth(dps_series) >= 1
+    ) else 0
+
     return result
 
 
@@ -941,6 +948,47 @@ def apply_turnaround_screen(df):
     return t
 
 
+def apply_dividend_growth_screen(df):
+    """
+    ⑥ 배당 성장주 (배당금 & 수익 지속 증가) — 배당 성향 관리 기업
+    조건:
+      - 순이익 연속성장 ≥ 2년
+      - 배당금(DPS) 연속증가 ≥ 1년
+      - DPS_CAGR > 0 (배당금 성장)
+      - ROE ≥ 5% (수익성)
+      - 배당수익률 > 0 (배당 중시 기업)
+      - 시총 300억+
+      - 현재 흑자
+      - 수익 + 배당 동반증가 확인 (배당_수익동반증가 == 1)
+    """
+    mask = (
+        (df["순이익_연속성장"] >= 2) &
+        (df["배당_연속증가"] >= 1) &
+        pd.notna(df["DPS_CAGR"]) & (df["DPS_CAGR"] > 0) &
+        pd.notna(df["ROE(%)"]) & (df["ROE(%)"] >= 5) &
+        (df["배당수익률(%)"] > 0) &
+        (df["시가총액"] >= 30_000_000_000) &
+        (df["TTM_순이익"] > 0) &
+        (df["배당_수익동반증가"] == 1)
+    )
+    d = df[mask].copy()
+    if not d.empty:
+        d["배당성장_점수"] = (
+            d["DPS_CAGR"].rank(pct=True) * 3.0 +                    # 배당 성장률 (핵심)
+            d["순이익_CAGR"].rank(pct=True) * 2.5 +                   # 수익 성장률
+            d["배당_연속증가"].fillna(0).rank(pct=True) * 2.0 +        # 연속 배당 증가
+            d["순이익_연속성장"].fillna(0).rank(pct=True) * 2.0 +      # 연속 수익 증가
+            d["ROE(%)"].rank(pct=True) * 1.5 +                        # 자본 수익성
+            d["배당수익률(%)"].rank(pct=True) * 1.5 +                  # 배당 수익률
+            (1 - d["부채비율(%)"].fillna(0).rank(pct=True)) * 1.0 +   # 저부채 선호
+            d["F스코어"].fillna(0).rank(pct=True) * 0.5 +             # 재무건전성
+            (1 - d["PER"].clip(1, 100).rank(pct=True)) * 0.5         # 저PER
+        )
+    if "배당성장_점수" in d.columns:
+        return d.sort_values("배당성장_점수", ascending=False)
+    return d
+
+
 # ═════════════════════════════════════════════
 # 엑셀 저장
 # ═════════════════════════════════════════════
@@ -959,7 +1007,8 @@ def save_to_excel(df, filepath, sheet_name="Result"):
         "주요지표": ["PER", "PBR", "PSR", "PEG", "ROE(%)", "EPS", "BPS",
                     "부채비율(%)", "영업이익률(%)", "이익수익률(%)", "FCF수익률(%)",
                     "배당수익률(%)", "이익품질_양호"],
-        "점수": ["종합점수", "모멘텀_점수", "GARP_점수", "캐시카우_점수", "턴어라운드_점수"],
+        "배당": ["DPS_최근", "DPS_CAGR", "배당_연속증가", "배당_수익동반증가"],
+        "점수": ["종합점수", "모멘텀_점수", "GARP_점수", "캐시카우_점수", "턴어라운드_점수", "배당성장_점수"],
         "성장추세": ["매출_CAGR", "영업이익_CAGR", "순이익_CAGR",
                     "매출_연속성장", "영업이익_연속성장", "순이익_연속성장",
                     "이익률_개선", "이익률_급개선", "이익률_변동폭",
@@ -1077,6 +1126,10 @@ def run():
     turnaround_df = apply_turnaround_screen(full_df)
     save_to_excel(turnaround_df, DATA_DIR / "quant_turnaround.xlsx", "턴어라운드")
 
+    # 7. 배당 성장 (수익 + 배당 동반증가)
+    dividend_growth_df = apply_dividend_growth_screen(full_df)
+    save_to_excel(dividend_growth_df, DATA_DIR / "quant_dividend_growth.xlsx", "배당성장")
+
     # ── 요약 출력 ──
     print("\n" + "=" * 80)
     print(f"📏 단위 보정: {multiplier:,.0f}")
@@ -1086,6 +1139,7 @@ def run():
     print(f"📈 GARP (성장+가치):       {len(garp_df):,}개")
     print(f"💵 캐시카우 (현금흐름):    {len(cashcow_df):,}개")
     print(f"🔄 턴어라운드 (반등):      {len(turnaround_df):,}개")
+    print(f"💰 배당 성장 (수익+배당):  {len(dividend_growth_df):,}개")
     print("=" * 80)
 
     # TOP 10 출력
@@ -1112,6 +1166,12 @@ def run():
         cols = ["종목명", "흑자전환", "이익률_급개선", "이익률_변동폭", "영업이익률_최근", "ROE(%)", "턴어라운드_점수"]
         valid = [c for c in cols if c in turnaround_df.columns]
         print(turnaround_df[valid].head(10).to_string(index=False, float_format="%.1f"))
+
+    if len(dividend_growth_df) > 0:
+        print("\n💰 배당 성장 TOP 10:")
+        cols = ["종목명", "DPS_CAGR", "순이익_CAGR", "배당수익률(%)", "배당_연속증가", "ROE(%)", "배당성장_점수"]
+        valid = [c for c in cols if c in dividend_growth_df.columns]
+        print(dividend_growth_df[valid].head(10).to_string(index=False, float_format="%.1f"))
 
 
 if __name__ == "__main__":

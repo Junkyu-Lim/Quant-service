@@ -38,6 +38,7 @@ DISPLAY_COLS = [
     "52주_최고대비(%)", "52주_최저대비(%)", "MA20_이격도(%)", "MA60_이격도(%)",
     "RSI_14", "거래대금_20일평균", "거래대금_증감(%)", "변동성_60일(%)",
     "매출_CAGR", "영업이익_CAGR", "순이익_CAGR", "영업CF_CAGR", "FCF_CAGR",
+    "DPS_최근", "DPS_CAGR", "배당_연속증가", "배당_수익동반증가",
     "매출_연속성장", "영업이익_연속성장", "순이익_연속성장", "영업CF_연속성장",
     "이익률_개선", "이익률_급개선", "이익률_변동폭",
     "흑자전환", "영업이익률_최근", "영업이익률_전년",
@@ -103,7 +104,7 @@ def api_stocks():
     """Paginated stock list with filtering, sorting, and screening tab support.
 
     Query params:
-        screen  – screening filter: all / screened / momentum / garp / cashcow / turnaround
+        screen  – screening filter: all / screened / momentum / garp / cashcow / turnaround / dividend_growth
         market  – KOSPI / KOSDAQ
         q       – substring search (name or code)
         sort    – column name to sort by
@@ -138,6 +139,8 @@ def api_stocks():
         filtered = _apply_screen_filter(filtered, "cashcow")
     elif screen == "turnaround":
         filtered = _apply_screen_filter(filtered, "turnaround")
+    elif screen == "dividend_growth":
+        filtered = _apply_screen_filter(filtered, "dividend_growth")
 
     # ── Market filter ──
     if market and "시장구분" in filtered.columns:
@@ -318,6 +321,19 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
             ((df["흑자전환"] == 1) | (df["이익률_급개선"] == 1))
             & (df["TTM_순이익"] > 0)
             & (df["시가총액"] >= 30_000_000_000)
+        )
+        return df[mask]
+
+    elif name == "dividend_growth":
+        mask = (
+            (df["순이익_연속성장"] >= 2)
+            & (df["배당_연속증가"] >= 1)
+            & df["DPS_CAGR"].notna() & (df["DPS_CAGR"] > 0)
+            & df["ROE(%)"].notna() & (df["ROE(%)"] >= 5)
+            & (df["배당수익률(%)"] > 0)
+            & (df["시가총액"] >= 30_000_000_000)
+            & (df["TTM_순이익"] > 0)
+            & (df["배당_수익동반증가"] == 1)
         )
         return df[mask]
 
