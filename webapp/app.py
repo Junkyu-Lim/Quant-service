@@ -44,6 +44,11 @@ DISPLAY_COLS = [
     "매출_연속성장", "영업이익_연속성장", "순이익_연속성장", "영업CF_연속성장",
     "이익률_개선", "이익률_급개선", "이익률_변동폭",
     "흑자전환", "영업이익률_최근", "영업이익률_전년",
+    # 계절성 통제 지표 (분기 YoY)
+    "최근분기",
+    "Q_매출_YoY(%)", "Q_영업이익_YoY(%)", "Q_순이익_YoY(%)",
+    "Q_매출_연속YoY성장", "Q_영업이익_연속YoY성장", "Q_순이익_연속YoY성장",
+    "TTM_매출_YoY(%)", "TTM_영업이익_YoY(%)", "TTM_순이익_YoY(%)",
     "적정주가_SRIM", "괴리율(%)",
     "종합점수",
     "TTM_매출", "TTM_영업이익", "TTM_순이익", "TTM_영업CF", "TTM_CAPEX", "TTM_FCF",
@@ -396,9 +401,16 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
         return df[mask]
 
     elif name == "dividend_growth":
-        # dividend_growth 필터는 정의되지 않음 (quant_screener.py에 해당 함수 없음)
-        # 이 필터는 API에서 사용되지 않음
-        log.warning(f"필터 '{name}'는 구현되지 않음")
-        return df
+        mask = (
+            (df["순이익_연속성장"] >= 2)
+            & (df["배당_연속증가"] >= 1)
+            & df["DPS_CAGR"].notna() & (df["DPS_CAGR"] > 0)
+            & df["ROE(%)"].notna() & (df["ROE(%)"] >= 5)
+            & (df["배당수익률(%)"] > 0)
+            & (df["시가총액"] >= 30_000_000_000)
+            & (df["TTM_순이익"] > 0)
+            & (df["배당_수익동반증가"] == 1)
+        )
+        return df[mask]
 
     return df
