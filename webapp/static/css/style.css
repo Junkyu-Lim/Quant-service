@@ -129,6 +129,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .watch-btn:hover { color: #ffc107; }
 .watch-btn.watched { color: #ffc107; }
 
+/* Filter Presets */
+#preset-dropdown { min-width: 280px; max-height: 360px; overflow-y: auto; }
+#preset-dropdown .preset-desc { font-size: .68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+#preset-dropdown .preset-item .dropdown-item { padding: .4rem .75rem; }
+#preset-dropdown .preset-del-btn { font-size: .75rem; line-height: 1; opacity: 0; transition: opacity .15s; }
+#preset-dropdown .preset-item:hover .preset-del-btn { opacity: 1; }
+#preset-save-modal .modal-body { font-size: .85rem; }
+
 @media (max-width: 768px) {
   .report-header { flex-direction: column; gap: 12px; align-items: flex-start; }
   .risk-catalyst-grid { grid-template-columns: 1fr; }

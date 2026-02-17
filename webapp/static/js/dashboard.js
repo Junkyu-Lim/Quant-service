@@ -53,6 +53,184 @@
     if (currentScreen === "watchlist") loadStocks();
   }
 
+  // ── Filter Presets (localStorage) ──
+  const PRESETS_KEY = "quant_filter_presets";
+
+  function getPresets() {
+    try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || "[]"); }
+    catch { return []; }
+  }
+  function savePresets(presets) {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+  }
+
+  function getCurrentFilterState() {
+    return {
+      screen: currentScreen,
+      market: document.getElementById("f-market").value,
+      search: document.getElementById("f-search").value.trim(),
+      columnFilters: JSON.parse(JSON.stringify(columnFilters)),
+    };
+  }
+
+  function describeFilterState(state) {
+    const parts = [];
+    if (state.screen && state.screen !== "all") {
+      const tabNames = { screened: "Quality", momentum: "Momentum", garp: "GARP", cashcow: "Cashcow", turnaround: "Turnaround", dividend_growth: "Dividend Growth", watchlist: "Watchlist" };
+      parts.push("Tab: " + (tabNames[state.screen] || state.screen));
+    }
+    if (state.market) parts.push("Market: " + state.market);
+    if (state.search) parts.push("Search: " + state.search);
+    const cf = state.columnFilters || {};
+    Object.keys(cf).forEach(col => {
+      const f = cf[col];
+      if (f.min !== null && f.min !== undefined && f.max !== null && f.max !== undefined) {
+        parts.push(f.min + " <= " + col + " <= " + f.max);
+      } else if (f.min !== null && f.min !== undefined) {
+        parts.push(col + " >= " + f.min);
+      } else if (f.max !== null && f.max !== undefined) {
+        parts.push(col + " <= " + f.max);
+      }
+    });
+    return parts.length ? parts.join(", ") : "No filters set";
+  }
+
+  function applyPreset(preset) {
+    // Apply screen tab
+    if (preset.screen) {
+      currentScreen = preset.screen;
+      document.querySelectorAll("#screen-tabs .nav-link").forEach(l => {
+        l.classList.toggle("active", l.dataset.screen === preset.screen);
+      });
+      updateStrategyDescription(currentScreen);
+    }
+    // Apply market
+    document.getElementById("f-market").value = preset.market || "";
+    // Apply search
+    document.getElementById("f-search").value = preset.search || "";
+    // Apply column filters
+    Object.keys(columnFilters).forEach(k => delete columnFilters[k]);
+    if (preset.columnFilters) {
+      Object.assign(columnFilters, preset.columnFilters);
+    }
+    currentPage = 1;
+    sortCol = "종합점수";
+    sortOrder = "desc";
+    buildHeader();
+    loadStocks();
+    showToast("Preset loaded: " + preset.name);
+  }
+
+  function renderPresetDropdown() {
+    const presets = getPresets();
+    const dropdown = document.getElementById("preset-dropdown");
+    if (!presets.length) {
+      dropdown.innerHTML = '<li><span class="dropdown-item text-muted small">No saved presets</span></li>';
+      return;
+    }
+    dropdown.innerHTML = presets.map((p, i) => `
+      <li class="preset-item">
+        <a class="dropdown-item d-flex align-items-center gap-2 preset-load-btn" href="#" data-idx="${i}">
+          <div class="flex-grow-1" style="min-width:0;">
+            <div class="fw-semibold small">${escapeHtml(p.name)}</div>
+            <div class="text-muted preset-desc">${escapeHtml(describeFilterState(p))}</div>
+          </div>
+          <button class="btn btn-outline-danger btn-sm preset-del-btn px-1 py-0" data-idx="${i}" title="Delete">&times;</button>
+        </a>
+      </li>
+    `).join("") + '<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger small preset-clear-all" href="#">Delete All Presets</a></li>';
+
+    // Bind load
+    dropdown.querySelectorAll(".preset-load-btn").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.preventDefault();
+        if (e.target.closest(".preset-del-btn")) return;
+        const idx = parseInt(btn.dataset.idx);
+        const presets = getPresets();
+        if (presets[idx]) applyPreset(presets[idx]);
+      });
+    });
+
+    // Bind delete
+    dropdown.querySelectorAll(".preset-del-btn").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        const presets = getPresets();
+        const name = presets[idx]?.name || "";
+        presets.splice(idx, 1);
+        savePresets(presets);
+        renderPresetDropdown();
+        showToast("Preset deleted: " + name);
+      });
+    });
+
+    // Bind clear all
+    const clearAll = dropdown.querySelector(".preset-clear-all");
+    if (clearAll) {
+      clearAll.addEventListener("click", e => {
+        e.preventDefault();
+        if (!confirm("Delete all saved presets?")) return;
+        savePresets([]);
+        renderPresetDropdown();
+        showToast("All presets deleted");
+      });
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // Save preset button -> open modal
+  document.getElementById("btn-save-preset").addEventListener("click", () => {
+    const state = getCurrentFilterState();
+    document.getElementById("preset-save-summary").textContent = describeFilterState(state);
+    document.getElementById("preset-name-input").value = "";
+    const modal = new bootstrap.Modal(document.getElementById("preset-save-modal"));
+    modal.show();
+    setTimeout(() => document.getElementById("preset-name-input").focus(), 200);
+  });
+
+  // Confirm save
+  document.getElementById("btn-confirm-save-preset").addEventListener("click", () => {
+    const name = document.getElementById("preset-name-input").value.trim();
+    if (!name) {
+      document.getElementById("preset-name-input").classList.add("is-invalid");
+      return;
+    }
+    document.getElementById("preset-name-input").classList.remove("is-invalid");
+
+    const state = getCurrentFilterState();
+    state.name = name;
+    state.createdAt = new Date().toISOString();
+
+    const presets = getPresets();
+    // Overwrite if same name exists
+    const existIdx = presets.findIndex(p => p.name === name);
+    if (existIdx >= 0) {
+      presets[existIdx] = state;
+    } else {
+      presets.push(state);
+    }
+    savePresets(presets);
+    renderPresetDropdown();
+
+    bootstrap.Modal.getInstance(document.getElementById("preset-save-modal")).hide();
+    showToast("Preset saved: " + name);
+  });
+
+  // Enter key in preset name input
+  document.getElementById("preset-name-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("btn-confirm-save-preset").click();
+    }
+  });
+
   const tbody = document.getElementById("stock-tbody");
   const headerRow = document.getElementById("table-header");
   const pageInfo = document.getElementById("page-info");
@@ -1033,5 +1211,6 @@
   loadStocks();
   updateStrategyDescription(currentScreen);
   updateWatchlistCount();
+  renderPresetDropdown();
   initTooltips();
 })();
