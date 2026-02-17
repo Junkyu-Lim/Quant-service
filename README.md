@@ -7,12 +7,13 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
 ## 🎯 Features
 
 - **데이터 수집** (`quant_collector_enhanced.py`) — KRX 종목 마스터, 일별 시세, 재무제표(IS/BS/CF), 핵심 지표(FnGuide), 주식수를 SQLite DB에 병렬 수집 (ThreadPoolExecutor, MAX_WORKERS=15)
-- **퀀트 스크리닝** (`quant_screener.py` v6) — TTM 재무, CAGR 성장, S-RIM 밸류에이션, 백분위 점수 기반 5가지 전략별 스크리닝:
+- **퀀트 스크리닝** (`quant_screener.py` v8) — TTM 재무, CAGR 성장, S-RIM 밸류에이션, 백분위 점수 기반 6가지 전략별 스크리닝:
   - **Quality** (우량주/저평가) — ROE 12%+, PER 낮음, PBR 낮음, 연속 성장
   - **Momentum** (고성장) — CAGR 15%+, 이익률 개선
   - **GARP** (성장+가치) — Peter Lynch PEG < 1.5, ROE 12%+
   - **Cashcow** (현금흐름) — Buffett 스타일 FCF, 수익률 5%+, 이익 품질
   - **Turnaround** (실적 반등) — 흑자전환, 이익률 급개선
+  - **Dividend Growth** (배당 성장) — 순이익 연속 성장 + 배당금 연속 증가, DPS_CAGR > 0%, ROE 5%+
 - **배치 자동화** — APScheduler로 매일 장 마감 후 자동 실행 (18:00 KST 기본)
 - **웹 대시보드** — Flask 기반, Bootstrap 5.3, 6개 스크리닝 탭, 서버사이드 정렬/필터/페이징, 종목 상세 모달
 - **REST API** — JSON 기반 주식 목록, 상세, 시장 요약, 파이프라인 제어
@@ -120,6 +121,29 @@ Browser Dashboard (Bootstrap 5.3 SPA)
 - **`run.py`** — CLI 진입점
 - **`batch/scheduler.py`** — APScheduler 매일 자동 실행 (기본 18:00 KST)
 
+## 📊 Dividend Growth Strategy
+
+**배당 성장 전략** — 수익과 배당이 동반하여 성장하는 우량 배당주
+
+**조건:**
+- 순이익 연속 성장 ≥ 2년
+- 배당금(DPS) 연속 증가 ≥ 1년
+- DPS CAGR > 0% (배당금 연평균 성장률)
+- ROE ≥ 5% (수익성)
+- 배당수익률 > 0% (배당 중시 기업)
+- 시가총액 ≥ 300억원
+- 현재 순이익 > 0 (흑자)
+- 수익 + 배당 동반 증가 확인
+
+**점수 계산:**
+```
+배당성장_점수 = DPS_CAGR×3.0 + 순이익_CAGR×2.5 + 배당_연속증가×2.0
+              + 순이익_연속성장×2.0 + ROE×1.5 + 배당수익률×1.5
+              + 저부채×1.0 + F스코어×0.5
+```
+
+**출력:** `quant_dividend_growth.xlsx`
+
 ## 📚 Core Modules
 
 ### `db.py` — SQLite Database Helper
@@ -154,7 +178,7 @@ FnGuide, KRX에서 병렬로 재무데이터 수집.
 - SQLite DB via `db.save_df()` 저장
 - 한글 인코딩 자동 감지 (cp949/euc-kr/utf-8)
 
-### `quant_screener.py` — Screening Engine v6
+### `quant_screener.py` — Screening Engine v8
 
 TTM 재무, CAGR 성장률, S-RIM 밸류에이션 계산 후 백분위 기반 점수화.
 
@@ -163,15 +187,16 @@ TTM 재무, CAGR 성장률, S-RIM 밸류에이션 계산 후 백분위 기반 �
 - **CAGR (복리연평균 성장률)** — 매출, 영업이익, 순이익, 영업CF, FCF
 - **S-RIM (Residual Income Model)** — 내재가치 평가
 - **백분위 점수 (Percentile Scoring)** — 각 전략별 가중치 벡터 적용
-- **5가지 전략 필터:**
+- **6가지 전략 필터:**
   - Quality: ROE 12%+, PER 낮음
   - Momentum: CAGR 15%+, 이익률 개선
   - GARP: PEG < 1.5
   - Cashcow: FCF 수익률 5%+
   - Turnaround: 흑자전환, 이익률 급개선
+  - Dividend Growth: 순이익 연속 성장 ≥2년, 배당금 연속 증가 ≥1년
 
 **출력:**
-- 6개 Excel 파일 (master + 5개 전략)
+- 7개 Excel 파일 (master + 6개 전략)
 - SQLite `dashboard_result` 테이블 (웹 대시보드)
 
 **스크리닝 일관성:**
@@ -192,7 +217,7 @@ SQLite DB 기반 REST API + 웹 앱. 메모리 캐싱으로 DB 파일 변경 시
 | Method | Path | Description | Parameters |
 |---|---|---|---|
 | GET | `/` | 대시보드 페이지 | - |
-| GET | `/api/stocks` | 종목 목록 (필터, 정렬, 페이징) | `screen` (전략), `market`, `q` (검색), `sort`, `order`, `page`, `size` |
+| GET | `/api/stocks` | 종목 목록 (필터, 정렬, 페이징) | `screen` (all/screened/momentum/garp/cashcow/turnaround/dividend_growth), `market`, `q` (검색), `sort`, `order`, `page`, `size` |
 | GET | `/api/stocks/<code>` | 종목 상세 | - |
 | GET | `/api/markets/summary` | 시장별 요약 통계 | - |
 | GET | `/api/data/status` | 데이터 파일 상태 | - |
@@ -241,7 +266,7 @@ Claude API를 사용해 종목의 정성적 분석 보고서 생성 (선택사�
 **`webapp/templates/dashboard.html` + `webapp/static/js/dashboard.js`**
 
 - Bootstrap 5.3 기반 싱글페이지 앱 (SPA)
-- 6개 탭 (마스터 + 5가지 전략)
+- 7개 탭 (마스터 + 6가지 전략: Quality, Momentum, GARP, Cashcow, Turnaround, Dividend Growth)
 - 시장 요약 카드
 - 정렬 가능한 테이블
 - 종목 상세 모달
@@ -371,6 +396,12 @@ SELECT * FROM dashboard_result LIMIT 10;
 
 ```bash
 curl "http://localhost:5000/api/stocks?screen=Quality&market=KOSPI&page=1&size=20"
+```
+
+### Get Stock List (Dividend Growth 전략)
+
+```bash
+curl "http://localhost:5000/api/stocks?screen=dividend_growth&market=KOSPI&page=1&size=20"
 ```
 
 ### Get Stock Details
