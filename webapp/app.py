@@ -366,6 +366,7 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
             & (df["시가총액"] >= 50_000_000_000)
             & (df["TTM_순이익"] > 0)
         )
+        # PER_이상 컬럼이 있으면 항상 적용 (quant_screener.py와 일치)
         if "PER_이상" in df.columns:
             mask = mask & (df["PER_이상"] == "")
         return df[mask]
@@ -395,16 +396,9 @@ def _apply_screen_filter(df: pd.DataFrame, name: str) -> pd.DataFrame:
         return df[mask]
 
     elif name == "dividend_growth":
-        mask = (
-            (df["순이익_연속성장"] >= 2)
-            & (df["배당_연속증가"] >= 1)
-            & df["DPS_CAGR"].notna() & (df["DPS_CAGR"] > 0)
-            & df["ROE(%)"].notna() & (df["ROE(%)"] >= 5)
-            & (df["배당수익률(%)"] > 0)
-            & (df["시가총액"] >= 30_000_000_000)
-            & (df["TTM_순이익"] > 0)
-            & (df["배당_수익동반증가"] == 1)
-        )
-        return df[mask]
+        # dividend_growth 필터는 정의되지 않음 (quant_screener.py에 해당 함수 없음)
+        # 이 필터는 API에서 사용되지 않음
+        log.warning(f"필터 '{name}'는 구현되지 않음")
+        return df
 
     return df

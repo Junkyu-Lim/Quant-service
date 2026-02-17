@@ -239,7 +239,16 @@ def generate_report(stock: dict) -> dict:
         json_str = json_str.split("```", 1)[0]
     json_str = json_str.strip()
 
-    scores = json.loads(json_str)
+    try:
+        scores = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        log.error(f"JSON 파싱 실패 ({code} {name}): {str(e)[:100]}")
+        log.debug(f"시도한 JSON: {json_str[:200]}")
+        return {
+            "scores": {},
+            "report_html": f"<p>오류: JSON 파싱 실패</p>",
+            "error": str(e)
+        }
 
     generated_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     report_html = render_html(code, name, market, stock, scores, generated_date)

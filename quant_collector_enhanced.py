@@ -33,6 +33,8 @@ import FinanceDataReader as fdr
 from pykrx import stock
 from tqdm import tqdm
 
+import config
+
 warnings.filterwarnings("ignore")
 logging.basicConfig(
     level=logging.INFO,
@@ -43,8 +45,7 @@ log = logging.getLogger("COLLECTOR")
 # ─────────────────────────────────────────────
 # 설정
 # ─────────────────────────────────────────────
-DATA_DIR = Path("./data")
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = config.DATA_DIR
 
 MAX_WORKERS = 15          # FnGuide 동시 요청 수 (너무 높으면 차단됨)
 REQUEST_TIMEOUT = 12      # 초
@@ -280,8 +281,9 @@ def collect_price_history(tickers: list[str], days: int = 260) -> pd.DataFrame:
             try:
                 result = f.result()
                 all_rows.extend(result)
-            except Exception:
-                pass
+            except Exception as e:
+                ticker = futures[f]
+                log.warning(f"주가 히스토리 처리 실패: {ticker} → {str(e)[:100]}")
 
     log.info(f"  → 주가 히스토리 {len(all_rows)}건 수집 완료")
     return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
