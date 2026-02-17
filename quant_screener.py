@@ -1,21 +1,28 @@
 # =========================================================
-# quant_screener.py  (v6)
+# quant_screener.py  (v8)
 # ---------------------------------------------------------
 # [업데이트 내용]
-# v5 → v6 변경:
-#   4. GARP 스크리닝 추가: PEG<1.5 + 매출성장 10%↑ + ROE 12%↑
-#   5. 캐시카우 스크리닝 추가: 영업CF 우량 + 저부채 + 이익률 높음
-#   6. 턴어라운드 스크리닝 추가: 적자→흑자 전환 or 이익률 급개선
-#   7. analyze_one_stock에 턴어라운드/캐시카우 감지 필드 추가
-#   8. calc_valuation에 PSR, FCF수익률, PEG 등 파생지표 추가
+# v6 → v8 변경:
+#   1. 배당 성장주 전략 추가 (apply_dividend_growth_screen)
+#   2. 배당 관련 지표 확대: DPS_CAGR, 배당_연속증가, 배당_수익동반증가
+#   3. TTM 기반 분기별 YoY 지표 추가 (계절성 통제)
+#   4. 스크리닝 일관성 강화 (quant_screener.py ↔ webapp/app.py)
 #
-# 출력 파일 (6개):
-#   1) quant_all_stocks.xlsx   — 전체 종목
-#   2) quant_screened.xlsx     — 우량주/저평가 스크리닝
-#   3) quant_momentum.xlsx     — 폭발적 성장+마진개선
-#   4) quant_GARP.xlsx         — 성장+합리적 가격 (피터 린치)
-#   5) quant_cashcow.xlsx      — 현금흐름 우량 (버핏)
-#   6) quant_turnaround.xlsx   — 실적 반등 종목
+# v5 → v6 변경:
+#   1. GARP 스크리닝 추가: PEG<1.5 + 매출성장 10%↑ + ROE 12%↑
+#   2. 캐시카우 스크리닝 추가: 영업CF 우량 + 저부채 + 이익률 높음
+#   3. 턴어라운드 스크리닝 추가: 적자→흑자 전환 or 이익률 급개선
+#   4. analyze_one_stock에 턴어라운드/캐시카우 감지 필드 추가
+#   5. calc_valuation에 PSR, FCF수익률, PEG 등 파생지표 추가
+#
+# 출력 파일 (7개):
+#   1) quant_all_stocks.xlsx     — 전체 종목
+#   2) quant_screened.xlsx       — 우량주/저평가 스크리닝
+#   3) quant_momentum.xlsx       — 폭발적 성장+마진개선
+#   4) quant_GARP.xlsx           — 성장+합리적 가격 (피터 린치)
+#   5) quant_cashcow.xlsx        — 현금흐름 우량 (버핏)
+#   6) quant_turnaround.xlsx     — 실적 반등 종목
+#   7) quant_dividend_growth.xlsx — 배당 성장주 (수익+배당 동반증가)
 # =========================================================
 
 import sys
