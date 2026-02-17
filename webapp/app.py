@@ -29,6 +29,7 @@ CORS(app)
 
 # ── In-memory data cache ──
 _cache: dict = {"df": pd.DataFrame(), "mtime": 0}
+_prev_cache: dict = {"df": pd.DataFrame(), "mtime": 0}
 
 # ── Pipeline state ──
 _pipeline: dict = {"running": False, "started_at": None, "finished_at": None, "error": None}
@@ -79,6 +80,27 @@ def _load_data() -> pd.DataFrame:
         log.info("Loaded %d rows from DB (dashboard_result)", len(df))
 
     return _cache["df"]
+
+
+def _load_prev_data() -> pd.DataFrame:
+    """Load previous batch dashboard data (dashboard_result_prev) into cache."""
+    db_path = str(config.DB_PATH)
+    if not os.path.exists(db_path):
+        _prev_cache["df"] = pd.DataFrame()
+        _prev_cache["mtime"] = 0
+        return _prev_cache["df"]
+
+    mtime = os.path.getmtime(db_path)
+    if mtime != _prev_cache["mtime"]:
+        df = _db.load_dashboard_prev()
+        if not df.empty:
+            if "종목코드" in df.columns:
+                df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+            df = df.replace({np.nan: None})
+        _prev_cache["df"] = df
+        _prev_cache["mtime"] = mtime
+
+    return _prev_cache["df"]
 
 
 def _safe_val(v):
@@ -282,6 +304,53 @@ def api_batch_status():
         "finished_at": _pipeline["finished_at"],
         "error": _pipeline["error"],
     })
+
+
+@app.route("/api/batch/changes")
+def api_batch_changes():
+    """이전 배치 대비 종목 변동(편입/제거)을 전략별로 반환."""
+    curr_df = _load_data()
+    prev_df = _load_prev_data()
+
+    if curr_df.empty or prev_df.empty:
+        return jsonify({"has_changes": False, "strategies": {}})
+
+    screens = ["all", "screened", "momentum", "garp", "cashcow", "turnaround", "dividend_growth"]
+    result = {}
+
+    for screen in screens:
+        if screen == "all":
+            curr_codes = set(curr_df["종목코드"])
+            prev_codes = set(prev_df["종목코드"])
+        else:
+            curr_filtered = _apply_screen_filter(curr_df.copy(), screen)
+            prev_filtered = _apply_screen_filter(prev_df.copy(), screen)
+            curr_codes = set(curr_filtered["종목코드"])
+            prev_codes = set(prev_filtered["종목코드"])
+
+        added = curr_codes - prev_codes
+        removed = prev_codes - curr_codes
+
+        added_list = []
+        for code in sorted(added):
+            row = curr_df[curr_df["종목코드"] == code]
+            name = row.iloc[0]["종목명"] if not row.empty else code
+            added_list.append({"code": code, "name": name})
+
+        removed_list = []
+        for code in sorted(removed):
+            row = prev_df[prev_df["종목코드"] == code]
+            name = row.iloc[0]["종목명"] if not row.empty else code
+            removed_list.append({"code": code, "name": name})
+
+        result[screen] = {
+            "added": added_list,
+            "removed": removed_list,
+            "added_count": len(added_list),
+            "removed_count": len(removed_list),
+        }
+
+    return jsonify({"has_changes": True, "strategies": result})
 
 
 @app.route("/api/stocks/<code>/financials")

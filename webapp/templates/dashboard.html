@@ -33,36 +33,43 @@
     <li class="nav-item">
       <a class="nav-link active" href="#" data-screen="all">
         All Stocks <span class="badge bg-secondary ms-1" id="cnt-all"></span>
+        <span class="badge badge-change ms-1" id="chg-all" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="screened">
         Quality <span class="badge bg-success ms-1" id="cnt-screened"></span>
+        <span class="badge badge-change ms-1" id="chg-screened" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="momentum">
         Momentum <span class="badge bg-primary ms-1" id="cnt-momentum"></span>
+        <span class="badge badge-change ms-1" id="chg-momentum" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="garp">
         GARP <span class="badge bg-info ms-1" id="cnt-garp"></span>
+        <span class="badge badge-change ms-1" id="chg-garp" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="cashcow">
         Cashcow <span class="badge bg-warning text-dark ms-1" id="cnt-cashcow"></span>
+        <span class="badge badge-change ms-1" id="chg-cashcow" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="turnaround">
         Turnaround <span class="badge bg-danger ms-1" id="cnt-turnaround"></span>
+        <span class="badge badge-change ms-1" id="chg-turnaround" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
       <a class="nav-link" href="#" data-screen="dividend_growth">
         Dividend Growth <span class="badge bg-success ms-1" id="cnt-dividend_growth"></span>
+        <span class="badge badge-change ms-1" id="chg-dividend_growth" style="display:none;"></span>
       </a>
     </li>
     <li class="nav-item">
@@ -75,6 +82,9 @@
   <!-- Strategy description -->
   <div id="strategy-desc" class="alert alert-light mb-3 py-2 px-3 border-start-0 border-end-0 border-bottom rounded-0" style="font-size: 0.9rem; line-height: 1.6;">
   </div>
+
+  <!-- Batch changes banner -->
+  <div id="change-banner" class="change-banner mb-2" style="display:none;"></div>
 
   <!-- Filters -->
   <div class="card border-top-0 rounded-top-0 mb-3">

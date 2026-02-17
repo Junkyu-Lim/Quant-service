@@ -141,3 +141,49 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   .report-header { flex-direction: column; gap: 12px; align-items: flex-start; }
   .risk-catalyst-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Batch Change Indicators ── */
+.badge-change {
+  background: linear-gradient(135deg, #198754, #0d6efd);
+  color: #fff;
+  font-size: .65rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 8px;
+  letter-spacing: .3px;
+}
+
+.change-banner {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-left: 3px solid #0d6efd;
+  border-radius: 0 6px 6px 0;
+  padding: 8px 14px;
+  font-size: .82rem;
+}
+.change-banner .change-toggle-btn { text-decoration: none; color: #6c757d; }
+.change-banner .change-toggle-btn:hover { color: #0d6efd; }
+
+.change-stock-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: .75rem;
+  margin: 1px 2px;
+  font-weight: 500;
+}
+.change-stock-chip.added { background: #d1e7dd; color: #0f5132; }
+.change-stock-chip.removed { background: #e2e3e5; color: #41464b; text-decoration: line-through; }
+
+.badge-new {
+  font-size: .6rem;
+  vertical-align: middle;
+  padding: 1px 5px;
+  animation: fadeNewBadge 2s ease-in-out infinite alternate;
+}
+@keyframes fadeNewBadge {
+  from { opacity: 1; }
+  to { opacity: .6; }
+}
+
+tr.row-new { background-color: rgba(25, 135, 84, 0.04) !important; }

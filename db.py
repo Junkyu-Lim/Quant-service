@@ -231,6 +231,21 @@ def save_dashboard(df: pd.DataFrame):
     if df.empty:
         return
     with get_conn() as conn:
+        # 이전 배치 결과 보존: dashboard_result → dashboard_result_prev
+        try:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'dashboard_result'"
+            ).fetchone()[0]
+            if cnt:
+                conn.execute("DROP TABLE IF EXISTS dashboard_result_prev")
+                conn.execute(
+                    "CREATE TABLE dashboard_result_prev AS "
+                    "SELECT * FROM dashboard_result"
+                )
+        except Exception:
+            pass  # 최초 실행 시 이전 테이블 없음
+
         conn.execute("DROP TABLE IF EXISTS dashboard_result")
         conn.register("_dash_tmp", df)
         conn.execute("CREATE TABLE dashboard_result AS SELECT * FROM _dash_tmp")
@@ -270,6 +285,16 @@ def load_dashboard() -> pd.DataFrame:
     with get_conn() as conn:
         try:
             df = conn.execute("SELECT * FROM dashboard_result").df()
+        except Exception:
+            return pd.DataFrame()
+    return df
+
+
+def load_dashboard_prev() -> pd.DataFrame:
+    """이전 배치의 dashboard_result를 반환한다."""
+    with get_conn() as conn:
+        try:
+            df = conn.execute("SELECT * FROM dashboard_result_prev").df()
         except Exception:
             return pd.DataFrame()
     return df
