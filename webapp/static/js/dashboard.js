@@ -13,6 +13,7 @@
   let sortOrder = "desc";
   let advFilterOpen = false;
   const columnFilters = {}; // { column: { min, max } }
+  let batchChanges = null; // { has_changes, strategies: { screen: { added, removed, ... } } }
 
   // ── Watchlist (localStorage) ──
   const WATCHLIST_KEY = "quant_watchlist";
@@ -535,6 +536,87 @@
     }
   }
 
+  // ── Batch changes ──
+  async function loadBatchChanges() {
+    try {
+      const res = await fetch("/api/batch/changes");
+      const data = await res.json();
+      batchChanges = data;
+      renderChangeBadges();
+      renderChangeBanner(currentScreen);
+    } catch (e) { console.error("Batch changes error", e); }
+  }
+
+  function renderChangeBadges() {
+    if (!batchChanges || !batchChanges.has_changes) return;
+    const strategies = batchChanges.strategies;
+    Object.keys(strategies).forEach(screen => {
+      const info = strategies[screen];
+      const el = document.getElementById(`chg-${screen}`);
+      if (!el) return;
+      const parts = [];
+      if (info.added_count > 0) parts.push(`+${info.added_count}`);
+      if (info.removed_count > 0) parts.push(`-${info.removed_count}`);
+      if (parts.length > 0) {
+        el.textContent = parts.join(" / ");
+        el.style.display = "inline";
+      } else {
+        el.style.display = "none";
+      }
+    });
+  }
+
+  function renderChangeBanner(screenKey) {
+    const banner = document.getElementById("change-banner");
+    if (!banner) return;
+    if (!batchChanges || !batchChanges.has_changes) {
+      banner.style.display = "none";
+      return;
+    }
+    const info = batchChanges.strategies[screenKey];
+    if (!info || (info.added_count === 0 && info.removed_count === 0)) {
+      banner.style.display = "none";
+      return;
+    }
+
+    let html = '<div class="d-flex align-items-center gap-2 mb-1">'
+      + '<strong style="font-size:0.85rem;">이전 배치 대비 변동</strong>'
+      + `<span class="text-muted" style="font-size:0.75rem;">편입 ${info.added_count}건 · 제거 ${info.removed_count}건</span>`
+      + '<button class="btn btn-sm btn-link p-0 ms-auto change-toggle-btn" style="font-size:0.75rem;">상세 ▼</button>'
+      + '</div>';
+
+    html += '<div class="change-detail" style="display:none;">';
+    if (info.added_count > 0) {
+      html += '<div class="mb-1"><span class="badge bg-success me-1">NEW</span> '
+        + info.added.map(s => `<span class="change-stock-chip added" title="${s.code}">${s.name}</span>`).join(" ")
+        + '</div>';
+    }
+    if (info.removed_count > 0) {
+      html += '<div><span class="badge bg-secondary me-1">OUT</span> '
+        + info.removed.map(s => `<span class="change-stock-chip removed" title="${s.code}">${s.name}</span>`).join(" ")
+        + '</div>';
+    }
+    html += '</div>';
+
+    banner.innerHTML = html;
+    banner.style.display = "block";
+
+    // toggle detail
+    banner.querySelector(".change-toggle-btn").addEventListener("click", function () {
+      const detail = banner.querySelector(".change-detail");
+      const visible = detail.style.display !== "none";
+      detail.style.display = visible ? "none" : "block";
+      this.textContent = visible ? "상세 ▼" : "접기 ▲";
+    });
+  }
+
+  function getAddedCodes(screenKey) {
+    if (!batchChanges || !batchChanges.has_changes) return new Set();
+    const info = batchChanges.strategies[screenKey];
+    if (!info) return new Set();
+    return new Set(info.added.map(s => s.code));
+  }
+
   // ── Build table header ──
   function buildHeader() {
     const cols = COLUMNS[currentScreen] || COLUMNS.all;
@@ -754,9 +836,11 @@
       return;
     }
     const wl = getWatchlist();
+    const addedCodes = getAddedCodes(currentScreen);
     tbody.innerHTML = items.map(s => {
       const code = s["종목코드"];
       const watched = wl.has(code);
+      const isNew = addedCodes.has(code);
       const starCell = `<td style="text-align:center;padding:2px 4px;"><button class="watch-btn${watched ? " watched" : ""}" data-code="${code}">${watched ? "★" : "☆"}</button></td>`;
       const cells = cols.map(c => {
         const v = s[c.key];
@@ -765,9 +849,13 @@
         if (c.key === "시장구분") {
           return `<td><span class="badge ${v === "KOSPI" ? "bg-primary" : "bg-danger"}">${v || "-"}</span></td>`;
         }
+        // 종목명에 NEW 배지 표시
+        if (c.key === "종목명" && isNew) {
+          return `<td>${fmt(v, c.fmt)} <span class="badge bg-success badge-new">NEW</span></td>`;
+        }
         return `<td class="${cls}">${fmt(v, c.fmt)}</td>`;
       }).join("");
-      return `<tr data-code="${code}">${starCell}${cells}</tr>`;
+      return `<tr data-code="${code}"${isNew ? ' class="row-new"' : ""}>${starCell}${cells}</tr>`;
     }).join("");
 
     // 별표 버튼 이벤트
@@ -811,6 +899,7 @@
     sortCol = "종합점수";
     sortOrder = "desc";
     updateStrategyDescription(currentScreen);
+    renderChangeBanner(currentScreen);
     buildHeader();
     loadStocks();
   });
@@ -892,7 +981,7 @@
 
   // ── Refresh ──
   document.getElementById("btn-refresh").addEventListener("click", () => {
-    loadSummary(); loadTabCounts(); loadStocks();
+    loadSummary(); loadTabCounts(); loadBatchChanges(); loadStocks();
   });
 
   // ── Tooltip map for detail modal ──
@@ -1171,6 +1260,7 @@
           showToast("파이프라인 완료! 데이터를 새로고침합니다.");
           loadSummary();
           loadTabCounts();
+          loadBatchChanges();
           loadStocks();
         }
       }
@@ -1208,6 +1298,7 @@
   buildHeader();
   loadSummary();
   loadTabCounts();
+  loadBatchChanges();
   loadStocks();
   updateStrategyDescription(currentScreen);
   updateWatchlistCount();
