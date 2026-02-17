@@ -41,11 +41,28 @@
     "이익률_개선": "이익률_개선: 전년도 대비 올해 영업이익률이 개선되었는지 여부 (1=개선, 0=악화)",
     "이익률_급개선": "이익률_급개선: 전년도 대비 올해 영업이익률이 급격하게 개선되었는지 여부",
     "PEG": "PEG (PEG 비율)\n정의: PER을 예상 성장률로 나눈 값\n계산: PEG = PER / 성장률(%)\n1 이하이면 저평가된 성장주로 평가",
-    "FCF수익률(%)": "FCF% (자유현금흐름 수익률)\n정의: 매출액 대비 자유현금흐름의 비율\n현금 창출 능력을 보여주는 지표\n높을수록 현금 창출력이 좋음",
+    "FCF수익률(%)": "FCF Yield (자유현금흐름 수익률)\n정의: 시가총액 대비 FCF(영업CF - CAPEX) 비율\n계산: FCF수익률 = (영업CF - CAPEX) / 시가총액 × 100\n높을수록 현금 창출력 대비 저평가",
+    "현금전환율(%)": "현금전환율 (Cash Conversion)\n정의: 순이익 대비 영업현금흐름 비율\n계산: 영업CF / 순이익 × 100\n100% 이상이면 이익이 실제 현금으로 뒷받침됨",
+    "CAPEX비율(%)": "CAPEX 비율\n정의: 영업CF 대비 설비투자 비중\n계산: CAPEX / 영업CF × 100\n낮을수록 경자산(asset-light) 비즈니스",
+    "영업CF_CAGR": "영업CF CAGR\n정의: 영업활동현금흐름의 연평균 성장률\n현금 창출 능력의 성장 추세",
+    "FCF_CAGR": "FCF CAGR\n정의: 자유현금흐름(영업CF - CAPEX)의 연평균 성장률\n지속가능한 현금 성장력",
+    "영업CF_연속성장": "영업CF 연속성장\n최근 몇 년간 연속으로 영업CF가 성장한 연도 수",
+    "TTM_CAPEX": "TTM CAPEX\n최근 연간 유형자산 취득액 (설비투자)",
+    "TTM_FCF": "TTM FCF (자유현금흐름)\n계산: 영업CF - CAPEX\n실제로 주주에게 돌아갈 수 있는 현금",
     "부채비율(%)": "부채비율\n정의: 총부채를 자기자본으로 나눈 값\n계산: 부채비율(%) = (총부채 / 자기자본) × 100\n낮을수록 재정 건전성이 좋음",
     "이익품질_양호": "이익품질_양호: 영업현금흐름이 순이익보다 많은지 여부\n현금 기반 이익인지 확인하는 지표 (1=양호, 0=저조)",
     "흑자전환": "흑자전환: 적자에서 흑자로 전환되었는지 여부 (1=전환, 0=미전환)\n실적 반등 종목을 찾는 데 중요한 지표",
     "이익률_변동폭": "이익률_변동폭: 영업이익률의 최근 변화 폭\n변동폭이 작을수록 이익이 안정적",
+    "F스코어": "Piotroski F-Score (0~9점)\n재무건전성 종합 점수\nF1:수익성 F2:영업CF F3:ROA개선 F4:이익품질\nF5:레버리지감소 F6:유동성개선 F7:희석없음\nF8:매출총이익률개선 F9:자산회전율개선\n7점 이상 = 재무적으로 매우 건전",
+    "부채상환능력": "부채상환능력\n정의: 영업CF / 부채총계\n1.0 = 영업CF 1년으로 부채 전액 상환 가능\n높을수록 부채 부담이 적고 안전",
+    "52주_최고대비(%)": "52주 최고가 대비 현재 주가 위치\n음수 = 고점 대비 하락 중\n-10% 이하 = 조정 구간 진입",
+    "52주_최저대비(%)": "52주 최저가 대비 현재 주가 위치\n양수 = 저점 대비 상승\n높을수록 저점에서 많이 반등",
+    "MA20_이격도(%)": "20일 이동평균선 이격도\n양수 = 단기 MA 위\n음수 = 단기 MA 아래 (과매도 가능)",
+    "MA60_이격도(%)": "60일 이동평균선 이격도\n양수 = 중기 상승 추세\n음수 = 중기 하락 추세",
+    "RSI_14": "RSI 14일 (상대강도지수)\n70 이상 = 과매수\n30 이하 = 과매도\n50 = 중립",
+    "거래대금_20일평균": "최근 20거래일 평균 거래대금\n유동성(거래 활발도)을 나타내는 지표",
+    "거래대금_증감(%)": "거래대금 증감률\n최근 5일 평균 / 20일 평균 - 1\n급등 시 관심 증가 신호",
+    "변동성_60일(%)": "60일 변동성 (연환산)\n수익률 표준편차 × √252\n낮을수록 안정적",
   };
 
   const MARKET_TOOLTIPS = {
@@ -59,32 +76,32 @@
     all: {
       title: "📊 모든 상장 종목",
       criteria: "시가총액 기준으로 전체 상장 종목을 조회합니다.",
-      formula: "특정 필터링 기준 없음"
+      formula: "종합점수 = 저PER×1.5 + 저PBR×1.0 + ROE×2.0 + 매출CAGR×2.0 + 영업이익CAGR×2.0 + 순이익CAGR×1.0 + F-Score×2.0 + FCF수익률×1.5 + ..."
     },
     screened: {
       title: "🏆 우량주 (Quality) 전략",
-      criteria: "ROE ≥ 5% · PER 1-50 · PBR 0.1-10 · 매출 연속성장 ≥ 2년 · 순이익 연속성장 ≥ 1년",
-      formula: "점수 = (PER × 1.0 + PBR × 1.0 + ROE × 1.0 + 매출CAGR × 1.0 + 배당수익률 × 1.0 + 괴리율 × 1.0)의 percentile 가중합"
+      criteria: "ROE ≥ 5% · PER 1-50 · PBR 0.1-10 · 매출 연속성장 ≥ 2년 · 순이익 연속성장 ≥ 1년 · F-Score ≥ 5",
+      formula: "종합점수 기준 정렬 (밸류에이션 + 성장성 + 재무건전성 + FCF 수익률 종합)"
     },
     momentum: {
       title: "🚀 모멘텀/고성장 (Momentum) 전략",
       criteria: "매출 CAGR ≥ 15% OR 영업이익 CAGR ≥ 15% · 이익률 개선 · ROE ≥ 5%",
-      formula: "점수 = (매출CAGR × 2.0 + 영업이익CAGR × 2.5 + ROE × 1.5 + 영업이익률 × 1.0 + 이익률개선 × 1.0)의 percentile 가중합"
+      formula: "점수 = 영업이익CAGR×3.0 + 매출CAGR×2.5 + RSI×1.5 + MA20이격도×1.5 + ROE×1.5 + 영업이익률×1.5 + 거래대금증감×1.0"
     },
     garp: {
       title: "💎 GARP (성장 대비 합리적 가격) 전략",
       criteria: "PEG < 1.5 · 매출 CAGR ≥ 10% · ROE ≥ 12% · PER 5-30",
-      formula: "점수 = (저PEG × 3.0 + 매출성장 × 2.0 + 이익성장 × 1.5 + ROE × 2.0 + 저PER × 1.0 + 이익률개선 × 0.5 + 저평가 × 1.0)의 percentile 가중합"
+      formula: "점수 = 저PEG×3.0 + ROE×2.0 + 매출CAGR×2.0 + 이익CAGR×1.5 + 저PER×1.5 + 저PBR×1.0 + 현금전환율×1.0 + F-Score×0.5"
     },
     cashcow: {
-      title: "💰 캐시카우 (배당/현금창출) 전략",
-      criteria: "ROE ≥ 10% · 영업이익률 ≥ 10% · 부채비율 < 100% · 매출 연속성장 ≥ 1년",
-      formula: "점수 = (ROE × 2.5 + 영업이익률 × 2.5 + 저부채 × 2.0 + 안정성장 × 1.0 + 저PER × 1.0 + 배당수익률 × 0.5)의 percentile 가중합"
+      title: "💰 캐시카우 (현금창출 우량주) 전략",
+      criteria: "ROE ≥ 10% · 영업이익률 ≥ 10% · 부채비율 < 100% · 이익품질 양호 · F-Score ≥ 6",
+      formula: "점수 = FCF수익률×2.5 + 부채상환능력×2.0 + ROE×2.0 + 영업이익률×2.0 + 저부채×1.5 + F-Score×1.0 + 배당×0.5"
     },
     turnaround: {
       title: "📈 턴어라운드 (실적 반등) 전략",
       criteria: "적자→흑자 전환 OR 영업이익률 +5%p 급개선 · 현재 순이익 > 0 · 시가총액 ≥ 300억",
-      formula: "점수 = (이익률변동폭 × 2.5 + 매출성장 × 1.5 + ROE × 1.5 + 흑전보너스 × 1.5 + 저PER × 1.0 + 급개선보너스 × 1.0)의 percentile 가중합"
+      formula: "점수 = 이익률변동×2.0 + 매출CAGR×2.0 + 흑전보너스×2.0 + 급개선×1.5 + ROE×1.5 + 과매도RSI×1.0 + 52W저점×1.0"
     }
   };
 
@@ -98,10 +115,10 @@
       { key: "PER", label: "PER", fmt: "f2" },
       { key: "PBR", label: "PBR", fmt: "f2" },
       { key: "ROE(%)", label: "ROE%", fmt: "f2" },
+      { key: "F스코어", label: "F-Score", fmt: "int" },
       { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
-      { key: "배당수익률(%)", label: "Div%", fmt: "f2" },
       { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
-      { key: "적정주가_SRIM", label: "S-RIM", fmt: "int" },
+      { key: "FCF수익률(%)", label: "FCF%", fmt: "f2" },
       { key: "괴리율(%)", label: "Gap%", fmt: "f2" },
       { key: "종합점수", label: "Score", fmt: "f1" },
     ],
@@ -113,10 +130,10 @@
       { key: "PER", label: "PER", fmt: "f2" },
       { key: "PBR", label: "PBR", fmt: "f2" },
       { key: "ROE(%)", label: "ROE%", fmt: "f2" },
+      { key: "F스코어", label: "F-Score", fmt: "int" },
       { key: "매출_연속성장", label: "RevGrowth", fmt: "int" },
-      { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
+      { key: "FCF수익률(%)", label: "FCF%", fmt: "f2" },
       { key: "배당수익률(%)", label: "Div%", fmt: "f2" },
-      { key: "적정주가_SRIM", label: "S-RIM", fmt: "int" },
       { key: "괴리율(%)", label: "Gap%", fmt: "f2" },
       { key: "종합점수", label: "Score", fmt: "f1" },
     ],
@@ -125,11 +142,12 @@
       { key: "종목명", label: "Name" },
       { key: "시장구분", label: "Market" },
       { key: "종가", label: "Price", fmt: "int" },
-      { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
       { key: "영업이익_CAGR", label: "OP CAGR", fmt: "f1" },
+      { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
       { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
-      { key: "ROE(%)", label: "ROE%", fmt: "f2" },
-      { key: "PER", label: "PER", fmt: "f2" },
+      { key: "RSI_14", label: "RSI", fmt: "f1" },
+      { key: "MA20_이격도(%)", label: "MA20%", fmt: "f1" },
+      { key: "거래대금_증감(%)", label: "Vol%", fmt: "f1" },
       { key: "이익률_개선", label: "Improved", fmt: "flag" },
       { key: "종합점수", label: "Score", fmt: "f1" },
     ],
@@ -139,11 +157,12 @@
       { key: "시장구분", label: "Market" },
       { key: "종가", label: "Price", fmt: "int" },
       { key: "PEG", label: "PEG", fmt: "f2" },
-      { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
-      { key: "순이익_CAGR", label: "NI CAGR", fmt: "f1" },
-      { key: "ROE(%)", label: "ROE%", fmt: "f2" },
       { key: "PER", label: "PER", fmt: "f2" },
-      { key: "괴리율(%)", label: "Gap%", fmt: "f2" },
+      { key: "PBR", label: "PBR", fmt: "f2" },
+      { key: "매출_CAGR", label: "Rev CAGR", fmt: "f1" },
+      { key: "ROE(%)", label: "ROE%", fmt: "f2" },
+      { key: "현금전환율(%)", label: "CashConv%", fmt: "f1" },
+      { key: "F스코어", label: "F-Score", fmt: "int" },
       { key: "종합점수", label: "Score", fmt: "f1" },
     ],
     cashcow: [
@@ -152,10 +171,11 @@
       { key: "시장구분", label: "Market" },
       { key: "종가", label: "Price", fmt: "int" },
       { key: "FCF수익률(%)", label: "FCF%", fmt: "f2" },
+      { key: "부채상환능력", label: "DebtPay", fmt: "f2" },
       { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
       { key: "부채비율(%)", label: "Debt%", fmt: "f1" },
       { key: "ROE(%)", label: "ROE%", fmt: "f2" },
-      { key: "이익품질_양호", label: "Quality", fmt: "flag" },
+      { key: "F스코어", label: "F-Score", fmt: "int" },
       { key: "배당수익률(%)", label: "Div%", fmt: "f2" },
       { key: "종합점수", label: "Score", fmt: "f1" },
     ],
@@ -167,7 +187,8 @@
       { key: "흑자전환", label: "B/E Turn", fmt: "flag" },
       { key: "이익률_급개선", label: "OPM Jump", fmt: "flag" },
       { key: "이익률_변동폭", label: "OPM Delta", fmt: "f1" },
-      { key: "영업이익률(%)", label: "OPM%", fmt: "f2" },
+      { key: "RSI_14", label: "RSI", fmt: "f1" },
+      { key: "52주_최고대비(%)", label: "52W High%", fmt: "f1" },
       { key: "ROE(%)", label: "ROE%", fmt: "f2" },
       { key: "PER", label: "PER", fmt: "f2" },
       { key: "종합점수", label: "Score", fmt: "f1" },
@@ -179,7 +200,8 @@
     "PER", "PBR", "ROE(%)", "영업이익률(%)", "배당수익률(%)",
     "매출_CAGR", "영업이익_CAGR", "순이익_CAGR", "적정주가_SRIM",
     "괴리율(%)", "종합점수", "FCF수익률(%)", "부채비율(%)",
-    "매출_연속성장", "이익률_변동폭"
+    "매출_연속성장", "이익률_변동폭", "F스코어",
+    "52주_최고대비(%)", "52주_최저대비(%)", "RSI_14", "변동성_60일(%)"
   ];
 
   // ── Helpers ──
@@ -597,7 +619,16 @@
     "OP Streak": "영업이익 연속성장: 최근 몇 년간 연속으로 영업이익이 성장한 연도 수",
     "S-RIM": "S-RIM (적정주가): 단순화된 RIM 모델로 계산한 공정가치",
     "Gap%": "Gap% (괴리율): (현재주가 - 적정주가) / 적정주가 × 100\n음수=저평가, 양수=고평가",
-    "Score": "종합점수: 여러 재무 지표를 통합한 종합 점수 (0-1000점)",
+    "DebtPay": "부채상환능력: 영업CF / 부채총계\n1.0 이상이면 1년 내 부채 전액 상환 가능",
+    "CashConv%": "현금전환율: 영업CF / 순이익 × 100\n100% 이상이면 이익이 현금으로 뒷받침됨",
+    "OCF CAGR": "영업CF CAGR: 영업활동현금흐름의 연평균 성장률\n현금 창출 능력의 성장 추세",
+    "F-Score": "Piotroski F-Score (0~9점)\n7+ = 재무적으로 매우 건전\n5-6 = 보통\n4 이하 = 주의 필요",
+    "52W High%": "52주 최고가 대비 위치\n음수 = 고점 대비 하락 중",
+    "52W Low%": "52주 최저가 대비 위치\n양수 = 저점 대비 상승",
+    "RSI": "RSI 14일: 70+ 과매수, 30- 과매도",
+    "MA20%": "20일 이동평균 이격도\n양수=MA 위, 음수=MA 아래",
+    "Vol60%": "60일 연환산 변동성\n낮을수록 안정적",
+    "Score": "종합점수: 밸류에이션 + 성장성 + F-Score + FCF수익률 등 종합",
   };
 
   // ── Detail modal ──
@@ -619,12 +650,18 @@
         ["PEG", d["PEG"], "f2"],
         ["ROE%", d["ROE(%)"], "f2"], ["EPS", d["EPS"], "int"], ["BPS", d["BPS"], "int"],
         ["OPM%", d["영업이익률(%)"], "f2"], ["Debt%", d["부채비율(%)"], "f1"],
+        ["DebtPay", d["부채상환능력"], "f2"],
         ["Div%", d["배당수익률(%)"], "f2"], ["FCF%", d["FCF수익률(%)"], "f2"],
+        ["CashConv%", d["현금전환율(%)"], "f1"],
         ["Earn Yield%", d["이익수익률(%)"], "f2"],
         ["Rev CAGR", d["매출_CAGR"], "f1"], ["OP CAGR", d["영업이익_CAGR"], "f1"],
-        ["NI CAGR", d["순이익_CAGR"], "f1"],
+        ["NI CAGR", d["순이익_CAGR"], "f1"], ["OCF CAGR", d["영업CF_CAGR"], "f1"],
         ["Rev Streak", d["매출_연속성장"], "int"], ["OP Streak", d["영업이익_연속성장"], "int"],
         ["S-RIM", d["적정주가_SRIM"], "int"], ["Gap%", d["괴리율(%)"], "f2"],
+        ["F-Score", d["F스코어"], "int"],
+        ["52W High%", d["52주_최고대비(%)"], "f1"], ["52W Low%", d["52주_최저대비(%)"], "f1"],
+        ["RSI", d["RSI_14"], "f1"], ["MA20%", d["MA20_이격도(%)"], "f1"],
+        ["Vol60%", d["변동성_60일(%)"], "f1"],
         ["Score", d["종합점수"], "f1"],
       ];
 

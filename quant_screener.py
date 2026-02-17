@@ -58,6 +58,11 @@ EXACT_ACCOUNTS = {
     "영업CF": ["영업활동현금흐름", "영업활동으로인한현금흐름"],
     "투자CF": ["투자활동현금흐름", "투자활동으로인한현금흐름"],
     "CAPEX": ["유형자산의취득", "유형자산취득"],
+    # Piotroski F-Score용 BS/IS 계정
+    "자산총계": ["자산총계", "자산"],
+    "유동자산": ["유동자산"],
+    "유동부채": ["유동부채"],
+    "매출총이익": ["매출총이익"],
 }
 
 EXCLUDE_KEYWORDS = [
@@ -278,6 +283,31 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
 
     result.update({"자본": curr_equity, "부채": curr_debt})
 
+    # ── [v7] Piotroski F-Score용 BS/IS 시계열 ──
+    total_assets_series, debt_series, equity_series = {}, {}, {}
+    current_assets_series, current_liab_series = {}, {}
+    gross_profit_series = {}
+
+    if has_fs:
+        fs_y = fs_grp[fs_grp["주기"] == "y"]
+        total_assets_series = find_account_value(fs_y, "자산총계")
+        current_assets_series = find_account_value(fs_y, "유동자산")
+        current_liab_series = find_account_value(fs_y, "유동부채")
+        gross_profit_series = find_account_value(fs_y, "매출총이익")
+        debt_series = find_account_value(fs_y, "부채")
+        equity_series = find_account_value(fs_y, "자본")
+
+    # indicators fallback (BS 데이터)
+    if not total_assets_series and has_ind:
+        y_data = ind_grp[ind_grp["지표구분"] == "RATIO_Y"]
+        total_assets_series = find_account_value(y_data, "자산총계")
+    if not debt_series and has_ind:
+        y_data = ind_grp[ind_grp["지표구분"] == "RATIO_Y"]
+        debt_series = find_account_value(y_data, "부채")
+        equity_series = find_account_value(y_data, "자본")
+
+    result["자산총계"] = total_assets_series[max(total_assets_series.keys())] if total_assets_series else np.nan
+
     # ── 성장성 (CAGR) ──
     rev_series, op_series, ni_series = {}, {}, {}
     if has_ind:
@@ -331,20 +361,123 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
         result["순이익_당기양수"] = 0
         result["흑자전환"] = 0
 
-    # ── [v6] 영업CF (캐시카우용) ──
-    ttm_ocf = np.nan
+    # ── [v7] 영업CF / CAPEX / FCF 시계열 + TTM ──
+    ocf_series, capex_series = {}, {}
+
+    # 1) indicators(RATIO_Y)에서 연도별 시계열 추출
     if has_ind:
         y_data = ind_grp[ind_grp["지표구분"] == "RATIO_Y"]
-        ocf_dict = find_account_value(y_data, "영업CF", annual_dates if 'annual_dates' in dir() else None)
-        if ocf_dict:
-            ttm_ocf = ocf_dict[max(ocf_dict.keys())]
-    if pd.isna(ttm_ocf) and has_fs:
-        # 재무제표 CF에서 시도
-        cf_grp = fs_grp[fs_grp["계정"].str.contains("영업활동", na=False)]
-        if not cf_grp.empty:
-            last_cf = cf_grp.sort_values("기준일").iloc[-1]
-            ttm_ocf = float(last_cf["값"]) if pd.notna(last_cf["값"]) else np.nan
+        ad = annual_dates if 'annual_dates' in dir() else None
+        ocf_series = find_account_value(y_data, "영업CF", ad)
+        capex_series = find_account_value(y_data, "CAPEX", ad)
+
+    # 2) indicators에 없으면 financial_statements(CF)에서 fallback
+    if not ocf_series and has_fs:
+        fs_y = fs_grp[(fs_grp["주기"] == "y")]
+        ocf_series = find_account_value(fs_y, "영업CF")
+    if not capex_series and has_fs:
+        fs_y = fs_grp[(fs_grp["주기"] == "y")]
+        capex_series = find_account_value(fs_y, "CAPEX")
+
+    # CAPEX는 FnGuide에서 음수로 기재되므로 절대값 처리
+    capex_series = {d: abs(v) for d, v in capex_series.items()}
+
+    # 3) FCF 시계열 (영업CF - CAPEX, 동일 연도만)
+    fcf_series = {}
+    common_dates = set(ocf_series.keys()) & set(capex_series.keys())
+    for d in common_dates:
+        fcf_series[d] = ocf_series[d] - capex_series[d]
+
+    # TTM 값 (최신 연도)
+    ttm_ocf = ocf_series[max(ocf_series.keys())] if ocf_series else np.nan
+    ttm_capex = capex_series[max(capex_series.keys())] if capex_series else np.nan
+    ttm_fcf = fcf_series[max(fcf_series.keys())] if fcf_series else np.nan
+
     result["TTM_영업CF"] = ttm_ocf
+    result["TTM_CAPEX"] = ttm_capex
+    result["TTM_FCF"] = ttm_fcf
+    result["영업CF_CAGR"] = calc_cagr(ocf_series)
+    result["FCF_CAGR"] = calc_cagr(fcf_series)
+    result["영업CF_연속성장"] = count_consecutive_growth(ocf_series)
+
+    # ── [v7] Piotroski F-Score (9개 항목, 각 0 or 1) ──
+    f_score = 0
+
+    # F1: ROA > 0 (순이익 > 0이면 자산 대비 수익 양)
+    f1 = 1 if pd.notna(ttm_ni) and ttm_ni > 0 else 0
+
+    # F2: 영업CF > 0
+    f2 = 1 if pd.notna(ttm_ocf) and ttm_ocf > 0 else 0
+
+    # F3: ROA 개선 (순이익/자산총계 전년 대비 개선)
+    f3 = 0
+    if len(ni_series) >= 2 and len(total_assets_series) >= 2:
+        ni_dates = sorted(ni_series.keys())
+        ta_dates = sorted(total_assets_series.keys())
+        # 최근 2개년 공통
+        if len(ni_dates) >= 2 and len(ta_dates) >= 2:
+            roa_curr = ni_series[ni_dates[-1]] / total_assets_series[ta_dates[-1]] if total_assets_series[ta_dates[-1]] > 0 else 0
+            roa_prev = ni_series[ni_dates[-2]] / total_assets_series[ta_dates[-2]] if total_assets_series[ta_dates[-2]] > 0 else 0
+            f3 = 1 if roa_curr > roa_prev else 0
+
+    # F4: 이익품질 (영업CF > 순이익)
+    f4 = 1 if pd.notna(ttm_ocf) and pd.notna(ttm_ni) and ttm_ni > 0 and ttm_ocf > ttm_ni else 0
+
+    # F5: 레버리지 감소 (부채비율 전년 대비 감소)
+    f5 = 0
+    if len(debt_series) >= 2 and len(equity_series) >= 2:
+        d_dates = sorted(debt_series.keys())
+        e_dates = sorted(equity_series.keys())
+        if equity_series.get(e_dates[-1], 0) > 0 and equity_series.get(e_dates[-2], 0) > 0:
+            dr_curr = debt_series[d_dates[-1]] / equity_series[e_dates[-1]]
+            dr_prev = debt_series[d_dates[-2]] / equity_series[e_dates[-2]]
+            f5 = 1 if dr_curr < dr_prev else 0
+
+    # F6: 유동비율 개선 (유동자산/유동부채 전년 대비 개선)
+    f6 = 0
+    if len(current_assets_series) >= 2 and len(current_liab_series) >= 2:
+        ca_dates = sorted(current_assets_series.keys())
+        cl_dates = sorted(current_liab_series.keys())
+        if current_liab_series.get(cl_dates[-1], 0) > 0 and current_liab_series.get(cl_dates[-2], 0) > 0:
+            cr_curr = current_assets_series[ca_dates[-1]] / current_liab_series[cl_dates[-1]]
+            cr_prev = current_assets_series[ca_dates[-2]] / current_liab_series[cl_dates[-2]]
+            f6 = 1 if cr_curr > cr_prev else 0
+
+    # F7: 주식 희석 없음 (발행주식수 미증가) — calc_valuation에서 처리 (shares 데이터 필요)
+    f7 = 0  # placeholder, calc_valuation()에서 업데이트
+
+    # F8: 매출총이익률 개선
+    f8 = 0
+    if len(gross_profit_series) >= 2 and len(rev_series) >= 2:
+        gp_dates = sorted(gross_profit_series.keys())
+        rv_dates = sorted(rev_series.keys())
+        if len(gp_dates) >= 2 and len(rv_dates) >= 2:
+            if rev_series.get(rv_dates[-1], 0) > 0 and rev_series.get(rv_dates[-2], 0) > 0:
+                gm_curr = gross_profit_series[gp_dates[-1]] / rev_series[rv_dates[-1]]
+                gm_prev = gross_profit_series[gp_dates[-2]] / rev_series[rv_dates[-2]]
+                f8 = 1 if gm_curr > gm_prev else 0
+
+    # F9: 자산회전율 개선 (매출/자산총계 전년 대비 개선)
+    f9 = 0
+    if len(rev_series) >= 2 and len(total_assets_series) >= 2:
+        rv_dates = sorted(rev_series.keys())
+        ta_dates = sorted(total_assets_series.keys())
+        if total_assets_series.get(ta_dates[-1], 0) > 0 and total_assets_series.get(ta_dates[-2], 0) > 0:
+            at_curr = rev_series[rv_dates[-1]] / total_assets_series[ta_dates[-1]]
+            at_prev = rev_series[rv_dates[-2]] / total_assets_series[ta_dates[-2]]
+            f9 = 1 if at_curr > at_prev else 0
+
+    f_score = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9
+    result["F스코어"] = f_score
+    result["F1_수익성"] = f1
+    result["F2_영업CF"] = f2
+    result["F3_ROA개선"] = f3
+    result["F4_이익품질"] = f4
+    result["F5_레버리지"] = f5
+    result["F6_유동성"] = f6
+    result["F7_희석없음"] = f7
+    result["F8_매출총이익률"] = f8
+    result["F9_자산회전율"] = f9
 
     # ── 배당 ──
     dps_series = {}
@@ -354,7 +487,7 @@ def analyze_one_stock(ticker, ind_grp, fs_grp):
         if annual_dps:
             dps_series = find_account_value(dps_data, "배당금", annual_dps)
 
-    result["DPS_최근"] = list(dps_series.values())[-1] if dps_series else 0
+    result["DPS_최근"] = list(dps_series.values())[-1] if dps_series else np.nan
     result["DPS_CAGR"] = calc_cagr(dps_series)
     result["배당_연속증가"] = count_consecutive_growth(dps_series)
 
@@ -422,10 +555,22 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
         (df["EPS"] / df["종가"]) * 100, np.nan
     )
 
-    # FCF 수익률 (영업CF 기반 근사) — 캐시카우용
+    # FCF 수익률 (진짜 FCF = 영업CF - CAPEX)
     df["FCF수익률(%)"] = np.where(
-        pd.notna(df["TTM_영업CF"]) & (df["시가총액"] > 0),
-        (df["TTM_영업CF"] * M / df["시가총액"]) * 100, np.nan
+        pd.notna(df["TTM_FCF"]) & (df["시가총액"] > 0),
+        (df["TTM_FCF"] * M / df["시가총액"]) * 100, np.nan
+    )
+
+    # 현금전환율 (영업CF / 순이익 × 100, 100% 이상이면 이익이 현금으로 뒷받침됨)
+    df["현금전환율(%)"] = np.where(
+        pd.notna(df["TTM_영업CF"]) & pd.notna(df["TTM_순이익"]) & (df["TTM_순이익"] > 0),
+        (df["TTM_영업CF"] / df["TTM_순이익"]) * 100, np.nan
+    )
+
+    # CAPEX 비율 (CAPEX / 영업CF × 100, 낮을수록 경자산 비즈니스)
+    df["CAPEX비율(%)"] = np.where(
+        pd.notna(df["TTM_CAPEX"]) & pd.notna(df["TTM_영업CF"]) & (df["TTM_영업CF"] > 0),
+        (df["TTM_CAPEX"] / df["TTM_영업CF"]) * 100, np.nan
     )
 
     # 영업CF > 순이익 (이익 품질 플래그)
@@ -433,6 +578,32 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
         pd.notna(df["TTM_영업CF"]) & pd.notna(df["TTM_순이익"]) & (df["TTM_순이익"] > 0),
         np.where(df["TTM_영업CF"] > df["TTM_순이익"], 1, 0), 0
     )
+
+    # 부채상환능력 (영업CF / 부채총계, 높을수록 부채 상환 여력 큼)
+    df["부채상환능력"] = np.where(
+        pd.notna(df["TTM_영업CF"]) & pd.notna(df["부채"]) & (df["부채"] > 0),
+        (df["TTM_영업CF"] / df["부채"]), np.nan
+    )
+
+    # F7: 주식 희석 없음 (발행주식수 미증가) — shares 데이터 활용
+    if not shares_df.empty and "발행주식수" in shares_df.columns and "기준일" in shares_df.columns:
+        for idx, row in df.iterrows():
+            code = row["종목코드"]
+            s = shares_df[shares_df["종목코드"] == code].sort_values("기준일")
+            if len(s) >= 2:
+                latest_shares = s["발행주식수"].iloc[-1]
+                prev_shares = s["발행주식수"].iloc[-2]
+                if pd.notna(latest_shares) and pd.notna(prev_shares) and prev_shares > 0:
+                    df.at[idx, "F7_희석없음"] = 1 if latest_shares <= prev_shares else 0
+        # F스코어 재계산 (F7 반영)
+        if "F7_희석없음" in df.columns:
+            df["F스코어"] = (
+                df["F1_수익성"].fillna(0) + df["F2_영업CF"].fillna(0) +
+                df["F3_ROA개선"].fillna(0) + df["F4_이익품질"].fillna(0) +
+                df["F5_레버리지"].fillna(0) + df["F6_유동성"].fillna(0) +
+                df["F7_희석없음"].fillna(0) + df["F8_매출총이익률"].fillna(0) +
+                df["F9_자산회전율"].fillna(0)
+            )
 
     # S-RIM
     Ke = 8.0
@@ -446,40 +617,159 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
     # 검증 플래그
     df["PER_이상"] = np.where((df["PER"] < 0.5) | (df["PER"] > 500), "⚠️", "")
 
-    # ── 스코어링 ──
-    df["S_PER"] = (1 - df["PER"].rank(pct=True, na_option='bottom')) * 100
-    df["S_PBR"] = (1 - df["PBR"].rank(pct=True, na_option='bottom')) * 100
-    df["S_ROE"] = df["ROE(%)"].rank(pct=True, na_option='bottom') * 100
+    # ── 스코어링 (NaN은 순위에서 제외 → NaN 유지, 스크리닝 단계에서 필터) ──
+    df["S_PER"] = (1 - df["PER"].rank(pct=True, na_option='keep')) * 100
+    df["S_PBR"] = (1 - df["PBR"].rank(pct=True, na_option='keep')) * 100
+    df["S_ROE"] = df["ROE(%)"].rank(pct=True, na_option='keep') * 100
 
-    df["S_매출CAGR"] = df["매출_CAGR"].rank(pct=True, na_option='bottom') * 100
-    df["S_영업이익CAGR"] = df["영업이익_CAGR"].rank(pct=True, na_option='bottom') * 100
-    df["S_순이익CAGR"] = df["순이익_CAGR"].rank(pct=True, na_option='bottom') * 100
+    df["S_매출CAGR"] = df["매출_CAGR"].rank(pct=True, na_option='keep') * 100
+    df["S_영업이익CAGR"] = df["영업이익_CAGR"].rank(pct=True, na_option='keep') * 100
+    df["S_순이익CAGR"] = df["순이익_CAGR"].rank(pct=True, na_option='keep') * 100
 
+    # 연속성장: 각 항목 0~5년을 0~100으로 정규화 후 평균
     df["S_연속성장"] = (
-        df["매출_연속성장"].fillna(0).clip(0, 5) * 5 +
-        df["영업이익_연속성장"].fillna(0).clip(0, 5) * 5 +
-        df["순이익_연속성장"].fillna(0).clip(0, 5) * 5
-    )
+        df["매출_연속성장"].fillna(0).clip(0, 5) / 5 * 100 +
+        df["영업이익_연속성장"].fillna(0).clip(0, 5) / 5 * 100 +
+        df["순이익_연속성장"].fillna(0).clip(0, 5) / 5 * 100
+    ) / 3
 
-    df["S_이익률개선"] = df["이익률_개선"].fillna(0) * 50
-    df["S_배당수익률"] = df["배당수익률(%)"].rank(pct=True, na_option='bottom') * 100
-    df["S_배당연속증가"] = df["배당_연속증가"].fillna(0).clip(0, 5) * 15
-    df["S_괴리율"] = df["괴리율(%)"].rank(pct=True, na_option='bottom') * 100
+    # 이익률 변동폭 연속값 사용 (이진 플래그 대신 실제 개선폭 반영)
+    df["S_이익률개선"] = df["이익률_변동폭"].rank(pct=True, na_option='keep') * 100
+    df["S_배당수익률"] = df["배당수익률(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_배당연속증가"] = df["배당_연속증가"].fillna(0).clip(0, 5) / 5 * 100
+    df["S_괴리율"] = df["괴리율(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_F스코어"] = df["F스코어"].rank(pct=True, na_option='keep') * 100
+    df["S_FCF수익률"] = df["FCF수익률(%)"].rank(pct=True, na_option='keep') * 100
 
     df["종합점수"] = (
-        df["S_PER"] * 1.0 +
-        df["S_PBR"] * 0.5 +
-        df["S_ROE"] * 2.5 +
-        df["S_매출CAGR"] * 2.0 +
-        df["S_영업이익CAGR"] * 2.0 +
-        df["S_순이익CAGR"] * 0.5 +
-        df["S_연속성장"] * 1.0 +
-        df["S_이익률개선"] * 1.0 +
-        df["S_배당수익률"] * 0.5 +
-        df["S_배당연속증가"] * 0.5 +
-        df["S_괴리율"] * 1.0
+        df["S_PER"].fillna(0) * 1.5 +
+        df["S_PBR"].fillna(0) * 1.0 +
+        df["S_ROE"].fillna(0) * 2.0 +
+        df["S_매출CAGR"].fillna(0) * 2.0 +
+        df["S_영업이익CAGR"].fillna(0) * 2.0 +
+        df["S_순이익CAGR"].fillna(0) * 1.0 +
+        df["S_연속성장"].fillna(0) * 1.0 +
+        df["S_이익률개선"].fillna(0) * 1.0 +
+        df["S_배당수익률"].fillna(0) * 0.3 +
+        df["S_배당연속증가"].fillna(0) * 0.3 +
+        df["S_괴리율"].fillna(0) * 1.0 +
+        df["S_F스코어"].fillna(0) * 2.0 +
+        df["S_FCF수익률"].fillna(0) * 1.5
     )
 
+    return df
+
+
+# ═════════════════════════════════════════════
+# [v7] 기술적 지표 (주가 히스토리 기반)
+# ═════════════════════════════════════════════
+
+def calc_technical_indicators(df: pd.DataFrame, price_hist: pd.DataFrame) -> pd.DataFrame:
+    """주가 히스토리로 기술적 지표를 계산하여 df에 병합.
+
+    계산 지표:
+      - 52주_최고대비(%): (종가 - 52주고가) / 52주고가 × 100 (음수 = 고점 대비 하락)
+      - 52주_최저대비(%): (종가 - 52주저가) / 52주저가 × 100 (양수 = 저점 대비 상승)
+      - MA20_이격도(%): (종가 / 20일이동평균 - 1) × 100
+      - MA60_이격도(%): (종가 / 60일이동평균 - 1) × 100
+      - RSI_14: 14일 RSI (50 이상 = 상승 모멘텀)
+      - 거래대금_20일평균: 최근 20일 평균 거래대금
+      - 거래대금_증감(%): (최근 5일 평균 / 20일 평균 - 1) × 100
+      - 변동성_60일(%): 60일 수익률 표준편차 × √252 (연환산)
+    """
+    if price_hist.empty:
+        log.warning("주가 히스토리 없음 — 기술적 지표 건너뜀")
+        for col in ["52주_최고대비(%)", "52주_최저대비(%)", "MA20_이격도(%)", "MA60_이격도(%)",
+                     "RSI_14", "거래대금_20일평균", "거래대금_증감(%)", "변동성_60일(%)"]:
+            df[col] = np.nan
+        return df
+
+    tech_results = []
+    for code in df["종목코드"].unique():
+        ph = price_hist[price_hist["종목코드"] == code].copy()
+        if ph.empty or len(ph) < 5:
+            tech_results.append({"종목코드": code})
+            continue
+
+        ph = ph.sort_values("날짜")
+        closes = ph["종가"].dropna()
+
+        if len(closes) < 5:
+            tech_results.append({"종목코드": code})
+            continue
+
+        latest_close = closes.iloc[-1]
+        result = {"종목코드": code}
+
+        # 52주 최고/최저 대비
+        high_52w = ph["고가"].max() if "고가" in ph.columns else closes.max()
+        low_52w = ph["저가"].min() if "저가" in ph.columns else closes.min()
+        if pd.notna(high_52w) and high_52w > 0:
+            result["52주_최고대비(%)"] = (latest_close - high_52w) / high_52w * 100
+        if pd.notna(low_52w) and low_52w > 0:
+            result["52주_최저대비(%)"] = (latest_close - low_52w) / low_52w * 100
+
+        # 이동평균 이격도
+        if len(closes) >= 20:
+            ma20 = closes.iloc[-20:].mean()
+            if ma20 > 0:
+                result["MA20_이격도(%)"] = (latest_close / ma20 - 1) * 100
+        if len(closes) >= 60:
+            ma60 = closes.iloc[-60:].mean()
+            if ma60 > 0:
+                result["MA60_이격도(%)"] = (latest_close / ma60 - 1) * 100
+
+        # RSI 14일
+        if len(closes) >= 15:
+            delta = closes.diff()
+            gain = delta.where(delta > 0, 0.0)
+            loss = (-delta.where(delta < 0, 0.0))
+            avg_gain = gain.iloc[-14:].mean()
+            avg_loss = loss.iloc[-14:].mean()
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                result["RSI_14"] = 100 - (100 / (1 + rs))
+            elif avg_gain > 0:
+                result["RSI_14"] = 100.0
+            else:
+                result["RSI_14"] = 50.0
+
+        # 거래대금 분석
+        volumes = ph["거래량"].dropna() if "거래량" in ph.columns else pd.Series(dtype=float)
+        amounts = ph["거래대금"].dropna() if "거래대금" in ph.columns else pd.Series(dtype=float)
+
+        # 거래대금이 없으면 종가 × 거래량으로 추정
+        if amounts.empty and not volumes.empty:
+            amounts = (ph["종가"] * ph["거래량"]).dropna()
+
+        if len(amounts) >= 20:
+            avg_20d = amounts.iloc[-20:].mean()
+            result["거래대금_20일평균"] = avg_20d
+            if avg_20d > 0 and len(amounts) >= 5:
+                avg_5d = amounts.iloc[-5:].mean()
+                result["거래대금_증감(%)"] = (avg_5d / avg_20d - 1) * 100
+
+        # 변동성 (60일, 연환산)
+        if len(closes) >= 60:
+            returns = closes.pct_change().dropna()
+            if len(returns) >= 60:
+                vol_60 = returns.iloc[-60:].std() * np.sqrt(252) * 100
+                result["변동성_60일(%)"] = vol_60
+
+        tech_results.append(result)
+
+    tech_df = pd.DataFrame(tech_results)
+    if tech_df.empty:
+        return df
+
+    # 병합
+    tech_cols = [c for c in tech_df.columns if c != "종목코드"]
+    for col in tech_cols:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
+    df = df.merge(tech_df, on="종목코드", how="left")
+    log.info("기술적 지표 계산 완료 (%d종목)", len(tech_df))
     return df
 
 
@@ -497,7 +787,8 @@ def apply_screen(df):
         (df["매출_연속성장"] >= 2) &
         (df["순이익_연속성장"] >= 1) &
         (df["시가총액"] >= 50_000_000_000) &
-        (df["PER_이상"] == "")
+        (df["PER_이상"] == "") &
+        (df["F스코어"] >= 5)
     )
     return df[mask].sort_values("종합점수", ascending=False)
 
@@ -516,11 +807,14 @@ def apply_momentum_screen(df):
     mom_df = df[mask].copy()
     if not mom_df.empty:
         mom_df["모멘텀_점수"] = (
-            mom_df["매출_CAGR"].rank(pct=True) * 2.0 +
-            mom_df["영업이익_CAGR"].rank(pct=True) * 2.5 +
+            mom_df["매출_CAGR"].rank(pct=True) * 2.5 +
+            mom_df["영업이익_CAGR"].rank(pct=True) * 3.0 +
             mom_df["ROE(%)"].rank(pct=True) * 1.5 +
-            mom_df["영업이익률_최근"].rank(pct=True) * 1.0 +
-            mom_df["이익률_개선"].rank(pct=True) * 1.0
+            mom_df["영업이익률_최근"].rank(pct=True) * 1.5 +
+            mom_df["이익률_개선"].rank(pct=True) * 1.0 +
+            mom_df["RSI_14"].fillna(50).rank(pct=True) * 1.5 +
+            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 1.5 +
+            mom_df["거래대금_증감(%)"].fillna(0).rank(pct=True) * 1.0
         )
     if "모멘텀_점수" in mom_df.columns:
         return mom_df.sort_values("모멘텀_점수", ascending=False)
@@ -553,9 +847,12 @@ def apply_garp_screen(df):
             g["매출_CAGR"].rank(pct=True) * 2.0 +            # 높은 매출 성장
             g["영업이익_CAGR"].rank(pct=True) * 1.5 +        # 높은 이익 성장
             g["ROE(%)"].rank(pct=True) * 2.0 +               # 높은 ROE
-            (1 - g["PER"].rank(pct=True)) * 1.0 +            # 낮은 PER
+            (1 - g["PER"].rank(pct=True)) * 1.5 +            # 낮은 PER
+            (1 - g["PBR"].clip(0.5, 10).rank(pct=True)) * 1.0 +  # 낮은 PBR
+            g["현금전환율(%)"].fillna(100).clip(50, 200).rank(pct=True) * 1.0 +  # 현금 이익 품질
+            g["F스코어"].fillna(0).rank(pct=True) * 0.5 +    # 재무건전성
             g["이익률_개선"].fillna(0) * 0.5 +               # 이익률 개선 보너스
-            g["S_괴리율"] / 100 * 1.0                        # S-RIM 저평가 보너스
+            g["S_괴리율"].fillna(0) / 100 * 0.5              # S-RIM 저평가
         )
     if "GARP_점수" in g.columns:
         return g.sort_values("GARP_점수", ascending=False)
@@ -572,6 +869,8 @@ def apply_cashcow_screen(df):
       - 매출 연속성장 ≥ 1년
       - 시총 500억+
       - 흑자
+      - 이익품질 양호 (영업CF > 순이익)
+      - F스코어 ≥ 6 (재무 건전성)
     """
     mask = (
         pd.notna(df["ROE(%)"]) & (df["ROE(%)"] >= 10) &
@@ -582,18 +881,23 @@ def apply_cashcow_screen(df):
         ) &
         (df["매출_연속성장"] >= 1) &
         (df["시가총액"] >= 50_000_000_000) &
-        (df["TTM_순이익"] > 0)
+        (df["TTM_순이익"] > 0) &
+        (df["이익품질_양호"] == 1) &
+        (df["F스코어"] >= 6)
     )
     c = df[mask].copy()
     if not c.empty:
         c["캐시카우_점수"] = (
-            c["ROE(%)"].rank(pct=True) * 2.5 +                               # ROE
-            c["영업이익률(%)"].rank(pct=True) * 2.5 +                         # 영업이익률
-            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 2.0 +          # 저부채 선호
+            c["ROE(%)"].rank(pct=True) * 2.0 +                               # ROE
+            c["영업이익률(%)"].rank(pct=True) * 2.0 +                         # 영업이익률
+            (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 1.5 +          # 저부채 선호
+            c["FCF수익률(%)"].fillna(0).rank(pct=True) * 2.5 +               # FCF 수익률 (핵심)
+            c["부채상환능력"].fillna(0).clip(0, 3).rank(pct=True) * 2.0 +    # 부채상환 여력
             c["매출_연속성장"].fillna(0).rank(pct=True) * 1.0 +              # 안정 성장
             (1 - c["PER"].clip(1, 100).rank(pct=True)) * 1.0 +              # 저PER
             c["배당수익률(%)"].rank(pct=True) * 0.5 +                         # 배당 보너스
-            c["S_괴리율"] / 100 * 0.5                                        # S-RIM 저평가
+            c["F스코어"].rank(pct=True) * 1.0 +                              # 재무건전성
+            c["S_괴리율"].fillna(0) / 100 * 0.5                              # S-RIM 저평가
         )
     if "캐시카우_점수" in c.columns:
         return c.sort_values("캐시카우_점수", ascending=False)
@@ -621,13 +925,16 @@ def apply_turnaround_screen(df):
     t = df[mask].copy()
     if not t.empty:
         t["턴어라운드_점수"] = (
-            t["이익률_변동폭"].fillna(0).rank(pct=True) * 2.5 +       # 이익률 개선폭
-            t["매출_CAGR"].rank(pct=True) * 1.5 +                     # 매출 성장
+            t["이익률_변동폭"].fillna(0).rank(pct=True) * 2.0 +       # 이익률 개선폭
+            t["매출_CAGR"].rank(pct=True) * 2.0 +                     # 매출 성장 (더 중요)
             t["ROE(%)"].rank(pct=True) * 1.5 +                        # ROE
-            t["흑자전환"].fillna(0) * 1.5 +                           # 흑전 보너스
+            t["흑자전환"].fillna(0) * 2.0 +                           # 흑전 보너스
             (1 - t["PER"].clip(0, 100).rank(pct=True)) * 1.0 +       # 저PER
-            t["이익률_급개선"].fillna(0) * 1.0 +                      # 급개선 보너스
-            t["S_괴리율"] / 100 * 1.0                                 # S-RIM 저평가
+            t["이익률_급개선"].fillna(0) * 1.5 +                      # 급개선 보너스
+            (1 - t["RSI_14"].fillna(50).rank(pct=True)) * 1.0 +      # 과매도 선호
+            (1 - t["52주_최고대비(%)"].fillna(0).abs().rank(pct=True)) * 1.0 +  # 저점 매수 기회
+            t["F스코어"].fillna(0).rank(pct=True) * 0.5 +             # 최소 재무건전성
+            t["S_괴리율"].fillna(0) / 100 * 0.5                      # S-RIM 저평가
         )
     if "턴어라운드_점수" in t.columns:
         return t.sort_values("턴어라운드_점수", ascending=False)
