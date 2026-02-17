@@ -638,19 +638,23 @@ def calc_valuation(daily, anal_df, multiplier, shares_df):
     df["S_배당수익률"] = df["배당수익률(%)"].rank(pct=True, na_option='keep') * 100
     df["S_배당연속증가"] = df["배당_연속증가"].fillna(0).clip(0, 5) / 5 * 100
     df["S_괴리율"] = df["괴리율(%)"].rank(pct=True, na_option='keep') * 100
+    df["S_F스코어"] = df["F스코어"].rank(pct=True, na_option='keep') * 100
+    df["S_FCF수익률"] = df["FCF수익률(%)"].rank(pct=True, na_option='keep') * 100
 
     df["종합점수"] = (
-        df["S_PER"].fillna(0) * 1.0 +
-        df["S_PBR"].fillna(0) * 0.5 +
-        df["S_ROE"].fillna(0) * 2.5 +
+        df["S_PER"].fillna(0) * 1.5 +
+        df["S_PBR"].fillna(0) * 1.0 +
+        df["S_ROE"].fillna(0) * 2.0 +
         df["S_매출CAGR"].fillna(0) * 2.0 +
         df["S_영업이익CAGR"].fillna(0) * 2.0 +
-        df["S_순이익CAGR"].fillna(0) * 0.5 +
+        df["S_순이익CAGR"].fillna(0) * 1.0 +
         df["S_연속성장"].fillna(0) * 1.0 +
         df["S_이익률개선"].fillna(0) * 1.0 +
-        df["S_배당수익률"].fillna(0) * 0.5 +
-        df["S_배당연속증가"].fillna(0) * 0.5 +
-        df["S_괴리율"].fillna(0) * 1.0
+        df["S_배당수익률"].fillna(0) * 0.3 +
+        df["S_배당연속증가"].fillna(0) * 0.3 +
+        df["S_괴리율"].fillna(0) * 1.0 +
+        df["S_F스코어"].fillna(0) * 2.0 +
+        df["S_FCF수익률"].fillna(0) * 1.5
     )
 
     return df
@@ -803,13 +807,14 @@ def apply_momentum_screen(df):
     mom_df = df[mask].copy()
     if not mom_df.empty:
         mom_df["모멘텀_점수"] = (
-            mom_df["매출_CAGR"].rank(pct=True) * 2.0 +
-            mom_df["영업이익_CAGR"].rank(pct=True) * 2.5 +
+            mom_df["매출_CAGR"].rank(pct=True) * 2.5 +
+            mom_df["영업이익_CAGR"].rank(pct=True) * 3.0 +
             mom_df["ROE(%)"].rank(pct=True) * 1.5 +
-            mom_df["영업이익률_최근"].rank(pct=True) * 1.0 +
+            mom_df["영업이익률_최근"].rank(pct=True) * 1.5 +
             mom_df["이익률_개선"].rank(pct=True) * 1.0 +
-            mom_df["RSI_14"].fillna(50).rank(pct=True) * 0.5 +
-            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 0.5
+            mom_df["RSI_14"].fillna(50).rank(pct=True) * 1.5 +
+            mom_df["MA20_이격도(%)"].fillna(0).rank(pct=True) * 1.5 +
+            mom_df["거래대금_증감(%)"].fillna(0).rank(pct=True) * 1.0
         )
     if "모멘텀_점수" in mom_df.columns:
         return mom_df.sort_values("모멘텀_점수", ascending=False)
@@ -842,9 +847,12 @@ def apply_garp_screen(df):
             g["매출_CAGR"].rank(pct=True) * 2.0 +            # 높은 매출 성장
             g["영업이익_CAGR"].rank(pct=True) * 1.5 +        # 높은 이익 성장
             g["ROE(%)"].rank(pct=True) * 2.0 +               # 높은 ROE
-            (1 - g["PER"].rank(pct=True)) * 1.0 +            # 낮은 PER
+            (1 - g["PER"].rank(pct=True)) * 1.5 +            # 낮은 PER
+            (1 - g["PBR"].clip(0.5, 10).rank(pct=True)) * 1.0 +  # 낮은 PBR
+            g["현금전환율(%)"].fillna(100).clip(50, 200).rank(pct=True) * 1.0 +  # 현금 이익 품질
+            g["F스코어"].fillna(0).rank(pct=True) * 0.5 +    # 재무건전성
             g["이익률_개선"].fillna(0) * 0.5 +               # 이익률 개선 보너스
-            g["S_괴리율"] / 100 * 1.0                        # S-RIM 저평가 보너스
+            g["S_괴리율"].fillna(0) / 100 * 0.5              # S-RIM 저평가
         )
     if "GARP_점수" in g.columns:
         return g.sort_values("GARP_점수", ascending=False)
@@ -884,6 +892,7 @@ def apply_cashcow_screen(df):
             c["영업이익률(%)"].rank(pct=True) * 2.0 +                         # 영업이익률
             (1 - c["부채비율(%)"].fillna(0).rank(pct=True)) * 1.5 +          # 저부채 선호
             c["FCF수익률(%)"].fillna(0).rank(pct=True) * 2.5 +               # FCF 수익률 (핵심)
+            c["부채상환능력"].fillna(0).clip(0, 3).rank(pct=True) * 2.0 +    # 부채상환 여력
             c["매출_연속성장"].fillna(0).rank(pct=True) * 1.0 +              # 안정 성장
             (1 - c["PER"].clip(1, 100).rank(pct=True)) * 1.0 +              # 저PER
             c["배당수익률(%)"].rank(pct=True) * 0.5 +                         # 배당 보너스
@@ -916,13 +925,16 @@ def apply_turnaround_screen(df):
     t = df[mask].copy()
     if not t.empty:
         t["턴어라운드_점수"] = (
-            t["이익률_변동폭"].fillna(0).rank(pct=True) * 2.5 +       # 이익률 개선폭
-            t["매출_CAGR"].rank(pct=True) * 1.5 +                     # 매출 성장
+            t["이익률_변동폭"].fillna(0).rank(pct=True) * 2.0 +       # 이익률 개선폭
+            t["매출_CAGR"].rank(pct=True) * 2.0 +                     # 매출 성장 (더 중요)
             t["ROE(%)"].rank(pct=True) * 1.5 +                        # ROE
-            t["흑자전환"].fillna(0) * 1.5 +                           # 흑전 보너스
+            t["흑자전환"].fillna(0) * 2.0 +                           # 흑전 보너스
             (1 - t["PER"].clip(0, 100).rank(pct=True)) * 1.0 +       # 저PER
-            t["이익률_급개선"].fillna(0) * 1.0 +                      # 급개선 보너스
-            t["S_괴리율"] / 100 * 1.0                                 # S-RIM 저평가
+            t["이익률_급개선"].fillna(0) * 1.5 +                      # 급개선 보너스
+            (1 - t["RSI_14"].fillna(50).rank(pct=True)) * 1.0 +      # 과매도 선호
+            (1 - t["52주_최고대비(%)"].fillna(0).abs().rank(pct=True)) * 1.0 +  # 저점 매수 기회
+            t["F스코어"].fillna(0).rank(pct=True) * 0.5 +             # 최소 재무건전성
+            t["S_괴리율"].fillna(0) / 100 * 0.5                      # S-RIM 저평가
         )
     if "턴어라운드_점수" in t.columns:
         return t.sort_values("턴어라운드_점수", ascending=False)
