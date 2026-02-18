@@ -18,7 +18,7 @@ python run.py pipeline --test
 # Full pipeline
 python run.py pipeline
 
-# Web server + scheduler
+# Web server
 python run.py server
 
 # Production
@@ -29,11 +29,12 @@ gunicorn -w 4 -b 0.0.0.0:5000 webapp.app:app
 
 | Module | Purpose |
 |--------|---------|
-| `db.py` | SQLite database (tables: master, daily, financial_statements, indicators, shares, dashboard_result) |
-| `quant_collector_enhanced.py` | Data collection (FnGuide, KRX) via ThreadPoolExecutor |
-| `quant_screener.py` | Screening engine (TTM, CAGR, S-RIM, 5 strategies) |
+| `db.py` | DuckDB database (`data/quant.duckdb`). Tables: master, daily, financial_statements, indicators, shares, price_history, dashboard_result, analysis_reports |
+| `quant_collector_enhanced.py` | Data collection (FnGuide, KRX, FinanceDataReader) via ThreadPoolExecutor |
+| `quant_screener.py` | Screening engine (TTM, CAGR, S-RIM, F-Score, technical indicators, 6 strategies) |
 | `webapp/app.py` | Flask REST API + dashboard |
 | `config.py` | Config (DB_PATH, BATCH_HOUR, HOST, PORT, ANTHROPIC_API_KEY) |
+| `analysis/claude_analyzer.py` | AI analysis reports (Claude API, 5 investment gurus framework) |
 
 ### Critical Notes for Code Changes
 
@@ -50,6 +51,7 @@ gunicorn -w 4 -b 0.0.0.0:5000 webapp.app:app
 - **Encoding**: Auto-detect cp949/euc-kr/utf-8 for Korean data
 - **DB versioning**: Use `collected_date` column (replaces dated CSV filenames)
 - **Scoring**: Percentile-based with strategy-specific weight vectors in `quant_screener.py`
+- **Dashboard backup**: `save_dashboard()` auto-backs up previous batch to `dashboard_result_prev`
 
 ### Config
 
@@ -68,4 +70,4 @@ ANALYSIS_MODEL=claude-sonnet-4-5-20250929
 
 **See README.md for full documentation.**
 
-Last updated: 2026-02-17
+Last updated: 2026-02-18
