@@ -7,7 +7,7 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
 ## 🎯 Features
 
 - **데이터 수집** (`quant_collector_enhanced.py`) — KRX 종목 마스터, 일별 시세, 재무제표(IS/BS/CF), 핵심 지표(FnGuide), 주식수를 SQLite DB에 병렬 수집 (ThreadPoolExecutor, MAX_WORKERS=15)
-- **퀀트 스크리닝** (`quant_screener.py` v8) — TTM 재무, CAGR 성장, S-RIM 밸류에이션, 백분위 점수 기반 6가지 전략별 스크리닝:
+- **퀀트 스크리닝** (`quant_screener.py` v8) — TTM 재무, CAGR 성장, S-RIM 밸류에이션, 백분위 점수 기반 6가지 전략별 스크리닝 (Quality, Momentum, GARP, Cashcow, Turnaround, Dividend Growth):
   - **Quality** (우량주/저평가) — ROE 12%+, PER 낮음, PBR 낮음, 연속 성장
   - **Momentum** (고성장) — CAGR 15%+, 이익률 개선
   - **GARP** (성장+가치) — Peter Lynch PEG < 1.5, ROE 12%+
@@ -28,7 +28,7 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
 ├── db.py                        # SQLite 데이터베이스 헬퍼
 │
 ├── quant_collector_enhanced.py  # 데이터 수집기 (KRX + FnGuide)
-├── quant_screener.py            # 스크리닝 엔진 (v6, TTM + CAGR + S-RIM)
+├── quant_screener.py            # 스크리닝 엔진 (v8, TTM + CAGR + S-RIM, 백분위 점수)
 │
 ├── batch/
 │   ├── __init__.py
@@ -96,23 +96,26 @@ gunicorn -w 4 -b 0.0.0.0:5000 webapp.app:app
 ```
 KRX/FnGuide sources
         ↓
-quant_collector_enhanced.py (병렬 수집)
+quant_collector_enhanced.py (ThreadPoolExecutor 병렬 수집, MAX_WORKERS=15)
         ↓
 SQLite DB (data/quant.db)
-        ├── master (종목 정보)
-        ├── daily (일별 시세)
-        ├── financial_statements (재무제표)
-        ├── indicators (지표)
-        ├── shares (주식수)
-        └── dashboard_result (스크리닝 결과)
+        ├── master (종목 정보: 종목코드, 종목명, 시장구분)
+        ├── daily (일별 시세: 종가, 거래량, 시가총액)
+        ├── financial_statements (재무제표: IS/BS/CF)
+        ├── indicators (지표: PER, PBR, PSR, PEG, ROE 등)
+        ├── shares (주식수: 발행주식수, 자사주 등)
+        └── dashboard_result (스크리닝 결과: 6가지 전략별 점수)
         ↓
-quant_screener.py (v6 스크리닝 엔진)
+quant_screener.py (v8 스크리닝 엔진: TTM + CAGR + S-RIM + 백분위 점수)
         ↓
-Excel + dashboard_result 테이블
+Excel 파일 (7개: master + 6가지 전략) + dashboard_result 테이블
         ↓
-Flask API (webapp/app.py)
+Flask REST API (webapp/app.py)
+        ├── 서버사이드 정렬/필터/페이징
+        ├── 대시보드 이미지 자동 로드
+        └── JSON 응답 (numpy 타입 안전 변환)
         ↓
-Browser Dashboard (Bootstrap 5.3 SPA)
+Browser Dashboard (Bootstrap 5.3 SPA, 7개 탭, 모달)
 ```
 
 ### Pipeline Orchestration
@@ -135,12 +138,13 @@ Browser Dashboard (Bootstrap 5.3 SPA)
 - 현재 순이익 > 0 (흑자)
 - 수익 + 배당 동반 증가 확인
 
-**점수 계산:**
+**점수 계산 (가중치 벡터):**
 ```
 배당성장_점수 = DPS_CAGR×3.0 + 순이익_CAGR×2.5 + 배당_연속증가×2.0
               + 순이익_연속성장×2.0 + ROE×1.5 + 배당수익률×1.5
               + 저부채×1.0 + F스코어×0.5
 ```
+**점수 정규화:** 모든 지표를 백분위로 변환 후 위의 가중치를 적용하여 종합 점수 산출 (0~100 범위)
 
 **출력:** `quant_dividend_growth.xlsx`
 
@@ -170,34 +174,43 @@ SQLite 데이터베이스 관리. 모든 데이터는 `data/quant.db`에 저장�
 
 ### `quant_collector_enhanced.py` — Data Collector
 
-FnGuide, KRX에서 병렬로 재무데이터 수집.
+FnGuide, KRX에서 병렬로 재무데이터 수집하여 SQLite DB에 저장.
+
+**수집 대상:**
+- **KRX 마스터**: 전체 상장 종목 정보 (종목코드, 종목명, 시장구분)
+- **FnGuide 재무제표**: 손익계산서(IS), 대차대조표(BS), 현금흐름표(CF)
+- **FnGuide 핵심지표**: PER, PBR, PSR, PEG, ROE, 부채비율, F스코어 등
+- **주식수**: 발행주식수, 자사주, 우선주 등
 
 **주요 기능:**
-- ThreadPoolExecutor 병렬 처리 (MAX_WORKERS=15)
-- FnGuide 크롤링: 재무제표, 지표, 주식수
-- SQLite DB via `db.save_df()` 저장
-- 한글 인코딩 자동 감지 (cp949/euc-kr/utf-8)
+- **병렬 처리**: ThreadPoolExecutor (MAX_WORKERS=15) 활용으로 수집 시간 단축
+- **HTML 크롤링**: FnGuide 페이지에서 테이블 파싱
+- **인코딩 자동 감지**: cp949/euc-kr/utf-8 자동 선택
+- **DB 저장**: `db.save_df(table, df, collected_date)` 활용 (날짜 기반 버전 관리)
+- **에러 처리**: 종목별 수집 실패 시에도 계속 진행
 
 ### `quant_screener.py` — Screening Engine v8
 
-TTM 재무, CAGR 성장률, S-RIM 밸류에이션 계산 후 백분위 기반 점수화.
+TTM 재무, CAGR 성장률, S-RIM 밸류에이션 계산 후 백분위 기반 점수화 (각 전략별 가중치 벡터 적용).
 
-**주요 기능:**
-- **TTM (Trailing Twelve Months)** — 최근 12개월 재무 수치
-- **CAGR (복리연평균 성장률)** — 매출, 영업이익, 순이익, 영업CF, FCF
-- **S-RIM (Residual Income Model)** — 내재가치 평가
-- **백분위 점수 (Percentile Scoring)** — 각 전략별 가중치 벡터 적용
-- **6가지 전략 필터:**
-  - Quality: ROE 12%+, PER 낮음
-  - Momentum: CAGR 15%+, 이익률 개선
-  - GARP: PEG < 1.5
-  - Cashcow: FCF 수익률 5%+
-  - Turnaround: 흑자전환, 이익률 급개선
-  - Dividend Growth: 순이익 연속 성장 ≥2년, 배당금 연속 증가 ≥1년
+**주요 구성 요소:**
+- **TTM (Trailing Twelve Months)** — 최근 12개월 재무 수치 집계
+- **CAGR (복리연평균 성장률)** — 매출, 영업이익, 순이익, 영업CF, FCF 성장률 계산
+- **S-RIM (Residual Income Model)** — 기업 내재가치 평가 모델
+- **백분위 점수 (Percentile Scoring)** — 정량화된 지표를 백분위로 변환하여 상대적 순위 지정
+- **전략별 가중치 벡터** — 각 전략의 특성에 맞게 지표별 가중치 설정
+
+**6가지 스크리닝 전략:**
+- **Quality (우량주/저평가)**: ROE 12%+, PER 낮음, PBR 낮음, 연속 성장
+- **Momentum (고성장)**: CAGR 15%+, 이익률 개선, 강한 상승 추세
+- **GARP (성장+가치)**: Peter Lynch PEG < 1.5, ROE 12%+, 적정가치 대비 할인
+- **Cashcow (현금흐름)**: Buffett 스타일 FCF, 수익률 5%+, 이익 품질 우수
+- **Turnaround (실적 반등)**: 흑자전환, 이익률 급개선, V자 회복세
+- **Dividend Growth (배당 성장)**: 순이익 연속 성장 ≥2년, 배당금 연속 증가 ≥1년, ROE 5%+
 
 **출력:**
-- 7개 Excel 파일 (master + 6개 전략)
-- SQLite `dashboard_result` 테이블 (웹 대시보드)
+- 7개 Excel 파일 (`quant_master.xlsx`, `quant_quality.xlsx`, `quant_momentum.xlsx`, `quant_garp.xlsx`, `quant_cashcow.xlsx`, `quant_turnaround.xlsx`, `quant_dividend_growth.xlsx`)
+- SQLite `dashboard_result` 테이블 (웹 대시보드용 통합 데이터)
 
 **스크리닝 일관성:**
 - 스크리닝 로직이 `quant_screener.py`와 `webapp/app.py`의 `_apply_screen_filter()`에 존재
@@ -216,13 +229,13 @@ SQLite DB 기반 REST API + 웹 앱. 메모리 캐싱으로 DB 파일 변경 시
 
 | Method | Path | Description | Parameters |
 |---|---|---|---|
-| GET | `/` | 대시보드 페이지 | - |
-| GET | `/api/stocks` | 종목 목록 (필터, 정렬, 페이징) | `screen` (all/screened/momentum/garp/cashcow/turnaround/dividend_growth), `market`, `q` (검색), `sort`, `order`, `page`, `size` |
-| GET | `/api/stocks/<code>` | 종목 상세 | - |
-| GET | `/api/markets/summary` | 시장별 요약 통계 | - |
-| GET | `/api/data/status` | 데이터 파일 상태 | - |
-| POST | `/api/batch/trigger` | 파이프라인 수동 실행 | - |
-| GET | `/api/report/<code>` | 종목 AI 분석 보고서 | - |
+| GET | `/` | 대시보드 SPA 페이지 | - |
+| GET | `/api/stocks` | 종목 목록 (필터, 정렬, 페이징) | `screen` (all/screened/quality/momentum/garp/cashcow/turnaround/dividend_growth), `market` (all/KOSPI/KOSDAQ), `q` (검색어), `sort` (컬럼명), `order` (asc/desc), `page` (1~), `size` (기본: 20) |
+| GET | `/api/stocks/<code>` | 종목 상세정보 | - |
+| GET | `/api/markets/summary` | 시장별 요약 통계 (KOSPI/KOSDAQ) | - |
+| GET | `/api/data/status` | 데이터 파일 상태 (수집 시간, 종목 수 등) | - |
+| POST | `/api/batch/trigger` | 파이프라인 수동 실행 (수집 + 스크리닝) | - |
+| GET | `/api/report/<code>` | 종목 AI 분석 보고서 (Claude API 기반) | - |
 
 ### `analysis/claude_analyzer.py` — AI Analysis (Optional)
 
@@ -258,8 +271,8 @@ Claude API를 사용해 종목의 정성적 분석 보고서 생성 (선택사�
 - `DEBUG` (기본: `false`)
 
 **Claude API (선택):**
-- `ANTHROPIC_API_KEY` — Anthropic API 키
-- `ANALYSIS_MODEL` (기본: `claude-sonnet-4-5-20250929`)
+- `ANTHROPIC_API_KEY` — Anthropic API 키 (sk-ant-... 형식)
+- `ANALYSIS_MODEL` (기본: `claude-sonnet-4-5-20250929`) — Claude 3.5 Sonnet 최신 버전
 
 ## 📱 Frontend
 
@@ -446,4 +459,4 @@ curl "http://localhost:5000/api/report/005930"
 
 ---
 
-**마지막 업데이트:** 2026-02-17
+**마지막 업데이트:** 2026-02-18
