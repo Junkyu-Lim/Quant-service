@@ -1436,6 +1436,13 @@
     await openCompareModal([...compareSelection]);
   });
 
+  // Cleanup charts when modal closes
+  document.getElementById("compare-modal").addEventListener("hidden.bs.modal", () => {
+    if (compareRadarChart) { compareRadarChart.destroy(); compareRadarChart = null; }
+    if (compareFinChart) { compareFinChart.destroy(); compareFinChart = null; }
+    compareData = null;
+  });
+
   // ── Compare Modal Logic ──
   async function openCompareModal(codes) {
     const modal = new bootstrap.Modal(document.getElementById("compare-modal"));
