@@ -14,8 +14,7 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
   - **Cashcow** (현금흐름) — Buffett 스타일 FCF, 수익률 5%+, 이익 품질
   - **Turnaround** (실적 반등) — 흑자전환, 이익률 급개선
   - **Dividend Growth** (배당 성장) — 순이익 연속 성장 + 배당금 연속 증가, DPS_CAGR > 0%, ROE 5%+
-- **배치 자동화** — APScheduler로 매일 장 마감 후 자동 실행 (18:00 KST 기본)
-- **웹 대시보드** — Flask 기반, Bootstrap 5.3, 7개 탭 (마스터 + 6가지 전략), 서버사이드 정렬/필터/페이징, 종목 상세 모달
+- **웹 대시보드** — Flask 기반, Bootstrap 5.3, 7개 탭 (마스터 + 6가지 전략), 서버사이드 정렬/필터/페이징, 종목 상세 모달, 수동 파이프라인 트리거
 - **REST API** — JSON 기반 주식 목록, 상세, 시장 요약, 파이프라인 제어
 - **AI 분석 리포트** — Claude API 기반 정성적 분석 보고서 생성 (선택사항)
 
@@ -23,7 +22,7 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
 
 ```
 ├── run.py                       # CLI 진입점
-├── config.py                    # 환경 설정 (SQLite, 배치, 웹, Claude API)
+├── config.py                    # 환경 설정 (SQLite, 웹, Claude API)
 ├── pipeline.py                  # 파이프라인 오케스트레이터
 ├── db.py                        # SQLite 데이터베이스 헬퍼
 │
@@ -32,7 +31,7 @@ KOSPI/KOSDAQ 퀀트 데이터 수집, 스크리닝, 웹 대시보드 자동화 �
 │
 ├── batch/
 │   ├── __init__.py
-│   └── scheduler.py             # APScheduler 배치 스케줄러 (매일 18:00 KST)
+│   └── scheduler.py             # 배치 스케줄러 유틸리티 (미사용 - 수동 파이프라인 트리거로 변경)
 │
 ├── webapp/
 │   ├── app.py                   # Flask REST API + 웹 앱
@@ -80,7 +79,7 @@ python run.py collect [--test]
 # 스크리닝만 실행 (기존 CSV/DB 데이터 필요)
 python run.py screen
 
-# 웹 서버 + 배치 스케줄러 시작 (18:00 KST 자동 실행)
+# 웹 서버 시작 (파이프라인은 UI의 "Run Pipeline" 버튼으로 수동 실행)
 python run.py server
 
 # 프로덕션 배포 (gunicorn)
@@ -120,9 +119,8 @@ Browser Dashboard (Bootstrap 5.3 SPA, 7개 탭, 모달)
 
 ### Pipeline Orchestration
 
-- **`pipeline.py`** — 수집 → 스크리닝 오케스트레이션
+- **`pipeline.py`** — 수집 → 스크리닝 오케스트레이션 (CLI 또는 UI 버튼으로 수동 실행)
 - **`run.py`** — CLI 진입점
-- **`batch/scheduler.py`** — APScheduler 매일 자동 실행 (기본 18:00 KST)
 
 ## 📊 Dividend Growth Strategy
 
@@ -261,10 +259,6 @@ Claude API를 사용해 종목의 정성적 분석 보고서 생성 (선택사�
 - `DB_PATH` — SQLite DB 경로 (기본: `data/quant.db`)
 - `REPORT_DIR` — AI 보고서 저장소 (기본: `data/reports/`)
 
-**배치 스케줄:**
-- `BATCH_HOUR` (기본: `18`) — 배치 실행 시각 (KST)
-- `BATCH_MINUTE` (기본: `0`) — 배치 실행 분
-
 **웹 서버:**
 - `HOST` (기본: `0.0.0.0`)
 - `PORT` (기본: `5000`)
@@ -289,8 +283,6 @@ Claude API를 사용해 종목의 정성적 분석 보고서 생성 (선택사�
 
 | Variable | Default | Description |
 |---|---|---|
-| `BATCH_HOUR` | `18` | 배치 실행 시각 (KST) |
-| `BATCH_MINUTE` | `0` | 배치 실행 분 |
 | `HOST` | `0.0.0.0` | 웹 서버 바인드 주소 |
 | `PORT` | `5000` | 웹 서버 포트 |
 | `DEBUG` | `false` | Flask 디버그 모드 |
@@ -299,7 +291,6 @@ Claude API를 사용해 종목의 정성적 분석 보고서 생성 (선택사�
 
 환경변수 설정 예:
 ```bash
-export BATCH_HOUR=19
 export DEBUG=true
 export ANTHROPIC_API_KEY=sk-ant-...
 python run.py server
