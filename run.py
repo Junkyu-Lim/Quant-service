@@ -6,7 +6,7 @@ Usage:
     python run.py server                       – Start web server + batch scheduler
     python run.py pipeline                     – Full pipeline (collect + screen)
     python run.py pipeline --test              – Test mode (3 sample stocks)
-    python run.py pipeline --skip-collect      – Screen only (CSV data must exist)
+    python run.py pipeline --skip-collect      – Screen only (DB data must exist)
     python run.py collect                      – Run collector only
     python run.py screen                       – Run screener only
 """
@@ -64,7 +64,7 @@ def main():
     p_col = sub.add_parser("collect", help="Run data collector only")
     p_col.add_argument("--test", action="store_true", help="Test mode (3 stocks only)")
 
-    sub.add_parser("screen", help="Run screener only (requires existing CSVs)")
+    sub.add_parser("screen", help="Run screener only (requires existing DB data)")
 
     args = parser.parse_args()
 

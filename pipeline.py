@@ -1,6 +1,6 @@
 """
 Pipeline orchestrator: runs quant_collector_enhanced → quant_screener
-and saves dashboard results to SQLite alongside the Excel outputs.
+and saves dashboard results to DuckDB alongside the Excel outputs.
 """
 
 import logging
@@ -20,6 +20,7 @@ from quant_screener import (
     apply_garp_screen,
     apply_cashcow_screen,
     apply_turnaround_screen,
+    apply_dividend_growth_screen,
     save_to_excel,
     DATA_DIR,
 )
@@ -102,10 +103,14 @@ def run_pipeline(skip_collect: bool = False, test_mode: bool = False):
     turnaround_df = apply_turnaround_screen(full_df)
     save_to_excel(turnaround_df, DATA_DIR / "quant_turnaround.xlsx", "턴어라운드")
 
+    dividend_growth_df = apply_dividend_growth_screen(full_df)
+    save_to_excel(dividend_growth_df, DATA_DIR / "quant_dividend_growth.xlsx", "배당성장")
+
     elapsed = datetime.now() - start
     log.info(
         "Pipeline finished in %s — %d total, %d screened, %d momentum, "
-        "%d GARP, %d cashcow, %d turnaround",
+        "%d GARP, %d cashcow, %d turnaround, %d dividend_growth",
         elapsed, len(full_df), len(screened), len(momentum_df),
         len(garp_df), len(cashcow_df), len(turnaround_df),
+        len(dividend_growth_df),
     )
