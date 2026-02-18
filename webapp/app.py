@@ -379,6 +379,121 @@ def api_stock_financials(code: str):
     return jsonify({"years": all_years, "series": series})
 
 
+def _get_financials_for_code(code: str) -> dict:
+    """단일 종목의 재무 시계열 데이터를 dict로 반환."""
+    df = _db.load_stock_financials(code)
+    if df.empty:
+        return {"years": [], "series": []}
+    df["year"] = df["기준일"].astype(str).str[:4]
+    all_years = sorted(df["year"].unique())
+    series_data: dict = {}
+    for _, row in df.iterrows():
+        acc = row["계정"]
+        yr = row["year"]
+        if acc not in series_data:
+            series_data[acc] = {}
+        series_data[acc][yr] = _safe_val(row["값"])
+    series = [
+        {"name": acc, "data": [series_data[acc].get(y) for y in all_years]}
+        for acc in ["매출액", "영업이익", "당기순이익"]
+        if acc in series_data
+    ]
+    return {"years": all_years, "series": series}
+
+
+# 비교 지표별 메타 정보 (best: "high" = 높을수록 좋음, "low" = 낮을수록 좋음)
+COMPARE_METRICS_META = {
+    # 밸류에이션
+    "PER": {"best": "low", "label": "PER"},
+    "PBR": {"best": "low", "label": "PBR"},
+    "PSR": {"best": "low", "label": "PSR"},
+    "PEG": {"best": "low", "label": "PEG"},
+    "적정주가_SRIM": {"best": "high", "label": "S-RIM"},
+    "괴리율(%)": {"best": "low", "label": "Gap%"},
+    # 성장성
+    "매출_CAGR": {"best": "high", "label": "Rev CAGR"},
+    "영업이익_CAGR": {"best": "high", "label": "OP CAGR"},
+    "순이익_CAGR": {"best": "high", "label": "NI CAGR"},
+    "영업CF_CAGR": {"best": "high", "label": "OCF CAGR"},
+    "FCF_CAGR": {"best": "high", "label": "FCF CAGR"},
+    "매출_연속성장": {"best": "high", "label": "Rev Streak"},
+    "영업이익_연속성장": {"best": "high", "label": "OP Streak"},
+    "순이익_연속성장": {"best": "high", "label": "NI Streak"},
+    "Q_매출_YoY(%)": {"best": "high", "label": "Q Rev YoY%"},
+    "Q_영업이익_YoY(%)": {"best": "high", "label": "Q OP YoY%"},
+    "Q_순이익_YoY(%)": {"best": "high", "label": "Q NI YoY%"},
+    "TTM_매출_YoY(%)": {"best": "high", "label": "TTM Rev YoY%"},
+    "TTM_영업이익_YoY(%)": {"best": "high", "label": "TTM OP YoY%"},
+    "TTM_순이익_YoY(%)": {"best": "high", "label": "TTM NI YoY%"},
+    # 수익성
+    "ROE(%)": {"best": "high", "label": "ROE%"},
+    "영업이익률(%)": {"best": "high", "label": "OPM%"},
+    "FCF수익률(%)": {"best": "high", "label": "FCF Yield%"},
+    "이익수익률(%)": {"best": "high", "label": "Earn Yield%"},
+    "배당수익률(%)": {"best": "high", "label": "Div Yield%"},
+    "현금전환율(%)": {"best": "high", "label": "CashConv%"},
+    "CAPEX비율(%)": {"best": "low", "label": "CAPEX%"},
+    # 재무건전성
+    "F스코어": {"best": "high", "label": "F-Score"},
+    "부채비율(%)": {"best": "low", "label": "Debt%"},
+    "부채상환능력": {"best": "high", "label": "DebtPay"},
+    "이익품질_양호": {"best": "high", "label": "EarnQual"},
+    # 기술적
+    "52주_최고대비(%)": {"best": "high", "label": "52W High%"},
+    "52주_최저대비(%)": {"best": "high", "label": "52W Low%"},
+    "RSI_14": {"best": "neutral", "label": "RSI"},
+    "MA20_이격도(%)": {"best": "neutral", "label": "MA20%"},
+    "MA60_이격도(%)": {"best": "neutral", "label": "MA60%"},
+    "변동성_60일(%)": {"best": "low", "label": "Vol60%"},
+    # 기본
+    "종가": {"best": "neutral", "label": "Price"},
+    "시가총액": {"best": "neutral", "label": "Mkt Cap"},
+    "종합점수": {"best": "high", "label": "Score"},
+    "DPS_CAGR": {"best": "high", "label": "DPS CAGR"},
+    "DPS_최근": {"best": "high", "label": "DPS"},
+    "배당_연속증가": {"best": "high", "label": "Div GrowYrs"},
+    "EPS": {"best": "high", "label": "EPS"},
+    "BPS": {"best": "high", "label": "BPS"},
+}
+
+
+@app.route("/api/stocks/compare")
+def api_stocks_compare():
+    """워치리스트 종목 비교용 API. 여러 종목의 지표 + 재무 시계열을 반환."""
+    codes_param = request.args.get("codes", "")
+    if not codes_param:
+        return jsonify({"error": "codes 파라미터가 필요합니다."}), 400
+
+    codes = [c.strip().zfill(6) for c in codes_param.split(",") if c.strip()]
+    if len(codes) < 2:
+        return jsonify({"error": "최소 2개 종목이 필요합니다."}), 400
+    if len(codes) > 8:
+        return jsonify({"error": "최대 8개 종목까지 비교 가능합니다."}), 400
+
+    df = _load_data()
+    if df.empty:
+        return jsonify({"error": "데이터가 없습니다."}), 404
+
+    matched = df[df["종목코드"].isin(codes)]
+    if matched.empty:
+        return jsonify({"error": "해당 종목을 찾을 수 없습니다."}), 404
+
+    available = [c for c in DISPLAY_COLS if c in matched.columns]
+    stocks = [_row_to_dict(row, available) for _, row in matched.iterrows()]
+
+    # 재무 시계열 데이터
+    financials = {}
+    for code in codes:
+        if code in matched["종목코드"].values:
+            financials[code] = _get_financials_for_code(code)
+
+    return jsonify({
+        "stocks": stocks,
+        "financials": financials,
+        "metrics_meta": COMPARE_METRICS_META,
+    })
+
+
 @app.route("/api/data/status")
 def api_data_status():
     """Check what data exists in the DB."""

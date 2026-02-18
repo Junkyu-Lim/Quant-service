@@ -620,8 +620,10 @@
   // ── Build table header ──
   function buildHeader() {
     const cols = COLUMNS[currentScreen] || COLUMNS.all;
+    const showCb = compareMode && currentScreen === "watchlist";
+    const cbTh = showCb ? `<th style="width:24px;text-align:center;cursor:default;" title="비교 선택">☑</th>` : "";
     const starTh = `<th style="width:24px;text-align:center;cursor:default;" title="관심 종목">★</th>`;
-    headerRow.innerHTML = starTh + cols.map(c => {
+    headerRow.innerHTML = cbTh + starTh + cols.map(c => {
       const tooltip = TOOLTIPS[c.key] || "";
       const isFilterable = FILTERABLE_COLUMNS.includes(c.key);
       const filterIcon = isFilterable ? `<button class="btn btn-sm btn-link p-0 ms-1 filter-icon" data-filter-col="${c.key}" style="font-size: 0.75rem; line-height: 1; color: #6c757d;" title="Filter">▼</button>` : "";
@@ -832,15 +834,19 @@
       const msg = currentScreen === "watchlist"
         ? "관심 종목이 없습니다. 테이블에서 ★ 버튼으로 추가하세요."
         : "No data. Run the pipeline first.";
-      tbody.innerHTML = `<tr><td colspan="${cols.length + 1}" class="text-center text-muted py-4">${msg}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${cols.length + 2}" class="text-center text-muted py-4">${msg}</td></tr>`;
       return;
     }
     const wl = getWatchlist();
     const addedCodes = getAddedCodes(currentScreen);
+    const showCb = compareMode && currentScreen === "watchlist";
     tbody.innerHTML = items.map(s => {
       const code = s["종목코드"];
       const watched = wl.has(code);
       const isNew = addedCodes.has(code);
+      const cbCell = showCb
+        ? `<td style="text-align:center;padding:2px 4px;"><input type="checkbox" class="compare-cb" data-code="${code}" ${compareSelection.has(code) ? "checked" : ""}></td>`
+        : "";
       const starCell = `<td style="text-align:center;padding:2px 4px;"><button class="watch-btn${watched ? " watched" : ""}" data-code="${code}">${watched ? "★" : "☆"}</button></td>`;
       const cells = cols.map(c => {
         const v = s[c.key];
@@ -855,7 +861,7 @@
         }
         return `<td class="${cls}">${fmt(v, c.fmt)}</td>`;
       }).join("");
-      return `<tr data-code="${code}"${isNew ? ' class="row-new"' : ""}>${starCell}${cells}</tr>`;
+      return `<tr data-code="${code}"${isNew ? ' class="row-new"' : ""}>${cbCell}${starCell}${cells}</tr>`;
     }).join("");
 
     // 별표 버튼 이벤트
@@ -865,6 +871,16 @@
         toggleWatch(btn.dataset.code);
       });
     });
+
+    // 비교 체크박스 이벤트
+    if (showCb) {
+      tbody.querySelectorAll(".compare-cb").forEach(cb => {
+        cb.addEventListener("click", e => {
+          e.stopPropagation();
+          toggleCompareSelection(cb.dataset.code);
+        });
+      });
+    }
   }
 
   function renderPagination(total, page, size) {
@@ -900,6 +916,7 @@
     sortOrder = "desc";
     updateStrategyDescription(currentScreen);
     renderChangeBanner(currentScreen);
+    updateCompareBar();
     buildHeader();
     loadStocks();
   });
@@ -1294,6 +1311,393 @@
     } catch (err) { showToast("Failed to trigger pipeline"); }
   });
 
+  // ══════════════════════════════════════════
+  // ── Compare Feature ──
+  // ══════════════════════════════════════════
+
+  let compareMode = false;
+  const compareSelection = new Set();
+
+  // 비교 카테고리별 지표 그룹
+  const COMPARE_CATEGORIES = {
+    valuation: {
+      label: "밸류에이션",
+      keys: ["종가", "시가총액", "PER", "PBR", "PSR", "PEG", "적정주가_SRIM", "괴리율(%)", "종합점수"],
+    },
+    growth: {
+      label: "성장성",
+      keys: ["매출_CAGR", "영업이익_CAGR", "순이익_CAGR", "영업CF_CAGR", "FCF_CAGR",
+             "매출_연속성장", "영업이익_연속성장", "순이익_연속성장",
+             "Q_매출_YoY(%)", "Q_영업이익_YoY(%)", "Q_순이익_YoY(%)",
+             "TTM_매출_YoY(%)", "TTM_영업이익_YoY(%)", "TTM_순이익_YoY(%)"],
+    },
+    profitability: {
+      label: "수익성",
+      keys: ["ROE(%)", "영업이익률(%)", "FCF수익률(%)", "이익수익률(%)", "배당수익률(%)",
+             "현금전환율(%)", "CAPEX비율(%)", "EPS", "BPS",
+             "DPS_최근", "DPS_CAGR", "배당_연속증가"],
+    },
+    health: {
+      label: "재무건전성",
+      keys: ["F스코어", "부채비율(%)", "부채상환능력", "이익품질_양호"],
+    },
+    technical: {
+      label: "기술적",
+      keys: ["52주_최고대비(%)", "52주_최저대비(%)", "RSI_14",
+             "MA20_이격도(%)", "MA60_이격도(%)", "변동성_60일(%)",
+             "거래대금_20일평균", "거래대금_증감(%)"],
+    },
+  };
+
+  // 레이더 차트용 지표 (0-100 정규화)
+  const RADAR_METRICS = [
+    { key: "PER", label: "저PER", invert: true },
+    { key: "PBR", label: "저PBR", invert: true },
+    { key: "ROE(%)", label: "ROE", invert: false },
+    { key: "영업이익률(%)", label: "수익성", invert: false },
+    { key: "매출_CAGR", label: "성장성", invert: false },
+    { key: "F스코어", label: "F-Score", invert: false },
+    { key: "FCF수익률(%)", label: "FCF%", invert: false },
+  ];
+
+  const COMPARE_COLORS = [
+    "#0d6efd", "#dc3545", "#198754", "#ffc107",
+    "#6f42c1", "#fd7e14", "#20c997", "#e83e8c",
+  ];
+
+  let compareRadarChart = null;
+  let compareFinChart = null;
+  let compareData = null; // API 응답 캐시
+  let currentCompareCategory = "valuation";
+
+  function updateCompareBar() {
+    const bar = document.getElementById("compare-bar");
+    if (currentScreen === "watchlist") {
+      bar.style.display = "block";
+    } else {
+      bar.style.display = "none";
+      exitCompareMode();
+    }
+  }
+
+  function enterCompareMode() {
+    compareMode = true;
+    compareSelection.clear();
+    document.getElementById("btn-compare-mode").style.display = "none";
+    document.getElementById("compare-count").style.display = "inline";
+    document.getElementById("btn-compare-start").style.display = "inline-block";
+    document.getElementById("btn-compare-cancel").style.display = "inline-block";
+    updateCompareCount();
+    buildHeader();
+    loadStocks(); // re-render with checkboxes
+  }
+
+  function exitCompareMode() {
+    compareMode = false;
+    compareSelection.clear();
+    document.getElementById("btn-compare-mode").style.display = "inline-block";
+    document.getElementById("compare-count").style.display = "none";
+    document.getElementById("btn-compare-start").style.display = "none";
+    document.getElementById("btn-compare-cancel").style.display = "none";
+    buildHeader();
+    if (currentScreen === "watchlist") loadStocks();
+  }
+
+  function updateCompareCount() {
+    const n = compareSelection.size;
+    document.getElementById("compare-count").textContent = `${n}개 선택`;
+    const btn = document.getElementById("btn-compare-start");
+    btn.disabled = n < 2;
+    btn.textContent = n >= 2 ? `비교 시작 (${n})` : "비교 시작";
+  }
+
+  function toggleCompareSelection(code) {
+    if (compareSelection.has(code)) {
+      compareSelection.delete(code);
+    } else {
+      if (compareSelection.size >= 8) {
+        showToast("최대 8개까지 선택할 수 있습니다.");
+        return;
+      }
+      compareSelection.add(code);
+    }
+    updateCompareCount();
+    // update checkbox state
+    document.querySelectorAll(".compare-cb").forEach(cb => {
+      cb.checked = compareSelection.has(cb.dataset.code);
+    });
+  }
+
+  // Bind compare bar buttons
+  document.getElementById("btn-compare-mode").addEventListener("click", enterCompareMode);
+  document.getElementById("btn-compare-cancel").addEventListener("click", exitCompareMode);
+  document.getElementById("btn-compare-start").addEventListener("click", async () => {
+    if (compareSelection.size < 2) return;
+    await openCompareModal([...compareSelection]);
+  });
+
+  // Cleanup charts when modal closes
+  document.getElementById("compare-modal").addEventListener("hidden.bs.modal", () => {
+    if (compareRadarChart) { compareRadarChart.destroy(); compareRadarChart = null; }
+    if (compareFinChart) { compareFinChart.destroy(); compareFinChart = null; }
+    compareData = null;
+  });
+
+  // ── Compare Modal Logic ──
+  async function openCompareModal(codes) {
+    const modal = new bootstrap.Modal(document.getElementById("compare-modal"));
+    modal.show();
+
+    document.getElementById("compare-thead").innerHTML = "";
+    document.getElementById("compare-tbody").innerHTML =
+      '<tr><td colspan="10" class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> 데이터 로딩 중...</td></tr>';
+
+    try {
+      const res = await fetch(`/api/stocks/compare?codes=${codes.join(",")}`);
+      compareData = await res.json();
+
+      if (compareData.error) {
+        document.getElementById("compare-tbody").innerHTML =
+          `<tr><td colspan="10" class="text-center text-danger py-4">${compareData.error}</td></tr>`;
+        return;
+      }
+
+      // Title
+      const names = compareData.stocks.map(s => s["종목명"]).join(" vs ");
+      document.getElementById("compare-title").textContent = `종목 비교: ${names}`;
+
+      // Render table, radar, financial chart
+      currentCompareCategory = "valuation";
+      setActiveCategoryTab("valuation");
+      renderCompareTable();
+      renderRadarChart();
+      renderFinancialCompareChart("매출액");
+    } catch (err) {
+      console.error("Compare error", err);
+      document.getElementById("compare-tbody").innerHTML =
+        '<tr><td colspan="10" class="text-center text-danger py-4">비교 데이터 로딩 실패</td></tr>';
+    }
+  }
+
+  // Category tab switching
+  document.getElementById("compare-category-tabs").addEventListener("click", e => {
+    const link = e.target.closest("[data-cat]");
+    if (!link) return;
+    e.preventDefault();
+    currentCompareCategory = link.dataset.cat;
+    setActiveCategoryTab(currentCompareCategory);
+    renderCompareTable();
+  });
+
+  function setActiveCategoryTab(cat) {
+    document.querySelectorAll("#compare-category-tabs .nav-link").forEach(l => {
+      l.classList.toggle("active", l.dataset.cat === cat);
+    });
+  }
+
+  // Financial chart toggle
+  document.getElementById("compare-fin-toggle").addEventListener("click", e => {
+    const btn = e.target.closest("[data-acc]");
+    if (!btn) return;
+    document.querySelectorAll("#compare-fin-toggle .btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderFinancialCompareChart(btn.dataset.acc);
+  });
+
+  // ── Render compare table ──
+  function renderCompareTable() {
+    if (!compareData || !compareData.stocks.length) return;
+
+    const stocks = compareData.stocks;
+    const meta = compareData.metrics_meta || {};
+    const catKeys = COMPARE_CATEGORIES[currentCompareCategory]?.keys || [];
+
+    // Header: 지표 | Stock1 | Stock2 | ...
+    const thead = document.getElementById("compare-thead");
+    thead.innerHTML = `<tr>
+      <th style="min-width:100px;">지표</th>
+      ${stocks.map(s => `<th>${s["종목명"]}<br><span style="font-weight:400;font-size:.7rem;">${s["종목코드"]}</span></th>`).join("")}
+    </tr>`;
+
+    // Body: each metric as a row
+    const tbody = document.getElementById("compare-tbody");
+    const rows = catKeys.map(key => {
+      const m = meta[key] || {};
+      const label = m.label || key;
+      const best = m.best || "neutral"; // "high", "low", "neutral"
+
+      const values = stocks.map(s => s[key]);
+      const numericVals = values.filter(v => v !== null && v !== undefined).map(Number);
+
+      let bestIdx = -1, worstIdx = -1;
+      if (best !== "neutral" && numericVals.length >= 2) {
+        const sorted = [...numericVals].sort((a, b) => a - b);
+        const bestVal = best === "high" ? sorted[sorted.length - 1] : sorted[0];
+        const worstVal = best === "high" ? sorted[0] : sorted[sorted.length - 1];
+        bestIdx = values.findIndex(v => v !== null && v !== undefined && Number(v) === bestVal);
+        worstIdx = values.findIndex(v => v !== null && v !== undefined && Number(v) === worstVal);
+        if (bestIdx === worstIdx) worstIdx = -1; // same value
+      }
+
+      const cells = values.map((v, i) => {
+        let cls = "";
+        if (i === bestIdx) cls = "best-val";
+        else if (i === worstIdx) cls = "worst-val";
+
+        let display = "-";
+        if (v !== null && v !== undefined) {
+          if (key === "시가총액") {
+            display = Math.round(Number(v) / 1e8).toLocaleString("ko-KR") + " 억";
+          } else if (key === "종가" || key === "적정주가_SRIM" || key === "EPS" || key === "BPS" || key === "DPS_최근" || key === "거래대금_20일평균") {
+            display = Number(v).toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+          } else if (key === "이익품질_양호") {
+            display = Number(v) === 1 ? "O" : "-";
+          } else {
+            display = Number(v).toFixed(key.includes("CAGR") || key.includes("(%)") || key.includes("YoY") ? 1 : 2);
+          }
+        }
+        return `<td class="${cls}">${display}</td>`;
+      }).join("");
+
+      return `<tr><td>${label}</td>${cells}</tr>`;
+    }).join("");
+
+    tbody.innerHTML = rows || '<tr><td colspan="10" class="text-center text-muted">해당 카테고리에 데이터가 없습니다.</td></tr>';
+  }
+
+  // ── Radar chart ──
+  function renderRadarChart() {
+    if (!compareData || !compareData.stocks.length) return;
+
+    const stocks = compareData.stocks;
+    const canvas = document.getElementById("compare-radar-chart");
+    if (compareRadarChart) { compareRadarChart.destroy(); compareRadarChart = null; }
+
+    // Normalize values to 0-100
+    const datasets = stocks.map((s, i) => {
+      const dataPoints = RADAR_METRICS.map(rm => {
+        const vals = stocks.map(st => st[rm.key]).filter(v => v !== null && v !== undefined).map(Number);
+        if (vals.length === 0) return 50;
+        const min = Math.min(...vals);
+        const max = Math.max(...vals);
+        const raw = s[rm.key];
+        if (raw === null || raw === undefined) return 0;
+        let normalized;
+        if (max === min) {
+          normalized = 50;
+        } else {
+          normalized = ((Number(raw) - min) / (max - min)) * 100;
+        }
+        return rm.invert ? 100 - normalized : normalized;
+      });
+
+      const color = COMPARE_COLORS[i % COMPARE_COLORS.length];
+      return {
+        label: s["종목명"],
+        data: dataPoints,
+        backgroundColor: color + "22",
+        borderColor: color,
+        borderWidth: 2,
+        pointBackgroundColor: color,
+        pointRadius: 3,
+      };
+    });
+
+    compareRadarChart = new Chart(canvas, {
+      type: "radar",
+      data: {
+        labels: RADAR_METRICS.map(m => m.label),
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { position: "bottom", labels: { font: { size: 11 }, boxWidth: 14 } },
+        },
+        scales: {
+          r: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { display: false },
+            pointLabels: { font: { size: 11 } },
+          },
+        },
+      },
+    });
+  }
+
+  // ── Financial comparison chart ──
+  function renderFinancialCompareChart(accountName) {
+    if (!compareData || !compareData.stocks.length) return;
+
+    const canvas = document.getElementById("compare-fin-chart");
+    if (compareFinChart) { compareFinChart.destroy(); compareFinChart = null; }
+
+    const stocks = compareData.stocks;
+    const financials = compareData.financials || {};
+
+    // Gather all years
+    const allYearsSet = new Set();
+    Object.values(financials).forEach(f => {
+      (f.years || []).forEach(y => allYearsSet.add(y));
+    });
+    const allYears = [...allYearsSet].sort();
+
+    if (allYears.length === 0) return;
+
+    const datasets = stocks.map((s, i) => {
+      const code = s["종목코드"];
+      const fin = financials[code];
+      if (!fin) return null;
+
+      const series = (fin.series || []).find(sr => sr.name === accountName);
+      if (!series) return null;
+
+      // Map fin.years -> allYears
+      const yearMap = {};
+      (fin.years || []).forEach((y, idx) => { yearMap[y] = series.data[idx]; });
+      const data = allYears.map(y => yearMap[y] ?? null);
+
+      const color = COMPARE_COLORS[i % COMPARE_COLORS.length];
+      return {
+        label: s["종목명"],
+        data,
+        borderColor: color,
+        backgroundColor: color + "33",
+        borderWidth: 2,
+        tension: 0.3,
+        pointRadius: 3,
+        fill: false,
+      };
+    }).filter(Boolean);
+
+    compareFinChart = new Chart(canvas, {
+      type: "line",
+      data: { labels: allYears, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "top", labels: { font: { size: 10 }, boxWidth: 12 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                if (v == null) return "-";
+                return ` ${ctx.dataset.label}: ${Number(v).toLocaleString("ko-KR")}`;
+              },
+            },
+          },
+        },
+        scales: {
+          y: { ticks: { font: { size: 9 }, callback: v => Number(v).toLocaleString("ko-KR") } },
+          x: { ticks: { font: { size: 10 } } },
+        },
+      },
+    });
+  }
+
   // ── Init ──
   buildHeader();
   loadSummary();
@@ -1304,4 +1708,5 @@
   updateWatchlistCount();
   renderPresetDropdown();
   initTooltips();
+  updateCompareBar();
 })();
